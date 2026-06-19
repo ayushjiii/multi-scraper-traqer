@@ -1,0 +1,205 @@
+<mxfile host="Electron">
+  <diagram name="Page-1" id="R9oSlM0zL7-N_ndpvVO0">
+    <mxGraphModel dx="2575" dy="1565" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-1" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Optimized Network Routing" vertex="1">
+          <mxGeometry height="304" width="1322" x="75" y="1099" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-2" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="K3s Scalable Pod Isolation" vertex="1">
+          <mxGeometry height="485" width="330" x="20" y="540" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-3" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="State Machine &amp; Scaling Engine" vertex="1">
+          <mxGeometry height="485" width="815" x="370" y="540" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-4" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);verticalAlign=top;" value="Redis Safe Storage" vertex="1">
+          <mxGeometry height="155" width="637" x="388" y="311" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-5" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="API &amp; Scheduling Control" vertex="1">
+          <mxGeometry height="217" width="1089" x="308" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-6" parent="1" style="rounded=1;whiteSpace=wrap;arcSize=50;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Client SaaS UI / Traqer App" vertex="1">
+          <mxGeometry height="39" width="219" x="526" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-7" parent="1" style="rounded=1;whiteSpace=wrap;arcSize=50;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Weekly Recurring Scheduler" vertex="1">
+          <mxGeometry height="39" width="224" x="833" y="45" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-8" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="n8n API Gateway Router" vertex="1">
+          <mxGeometry height="54" width="232" x="671" y="158" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-9" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;strokeWidth=2;whiteSpace=wrap;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="High-Priority Queue &#xa; SLA: &amp;lt; 60 Mins" vertex="1">
+          <mxGeometry height="105" width="156" x="496" y="336" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-10" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;strokeWidth=2;whiteSpace=wrap;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Low-Priority Queue &#xa; SLA: Nightly Run" vertex="1">
+          <mxGeometry height="104" width="153" x="702" y="336" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-11" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Python Cluster Orchestrator" vertex="1">
+          <mxGeometry height="78" width="260" x="775" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-12" parent="1" style="rhombus;strokeWidth=2;whiteSpace=wrap;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="KEDA Autoscaling Engine" vertex="1">
+          <mxGeometry height="228" width="228" x="427" y="565" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-13" parent="1" style="shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=10;strokeWidth=2;whiteSpace=wrap;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="PostgreSQL &#xa; States, Profiles &amp;amp; Proxies" vertex="1">
+          <mxGeometry height="109" width="195" x="939" y="891" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-14" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Camoufox Browser Worker Fleet" vertex="1">
+          <mxGeometry height="78" width="260" x="55" y="906" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-15" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Background Profile Factory &amp; Warmer" vertex="1">
+          <mxGeometry height="78" width="260" x="55" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-16" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Camoufox Network Interceptor Filter" vertex="1">
+          <mxGeometry height="78" width="260" x="388" y="1124" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-17" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Cheap/Local Datacenter Proxy" vertex="1">
+          <mxGeometry height="78" width="260" x="110" y="1300" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-18" parent="1" style="whiteSpace=wrap;strokeWidth=2;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Premium Residential Proxy Pool" vertex="1">
+          <mxGeometry height="78" width="260" x="1102" y="1300" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-19" parent="1" style="ellipse;aspect=fixed;strokeWidth=2;whiteSpace=wrap;fillColor=light-dark(#eeeeee,#1f2020);strokeColor=light-dark(#999999,#cccccc);fontColor=light-dark(#333333,#cccccc);" value="Target Generative Engine &#xa; ChatGPT / Gemini" vertex="1">
+          <mxGeometry height="196" width="196" x="420" y="1501" as="geometry" />
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-20" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-6" style="curved=1;startArrow=none;endArrow=block;exitX=0.19;exitY=1;entryX=0;entryY=0.11;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-8" value="Onboarding / High-Priority">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="438" y="121" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-21" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-7" style="curved=1;startArrow=none;endArrow=block;exitX=0.25;exitY=1;entryX=0.49;entryY=0;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-8" value="Off-Peak Batch Processing">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="781" y="121" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-22" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-8" style="curved=1;startArrow=none;endArrow=block;exitX=0.02;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-9" value="Route Urgent">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="574" y="237" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-23" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-8" style="curved=1;startArrow=none;endArrow=block;exitX=0.48;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-10" value="Route Automation">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="778" y="237" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-24" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-9" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.79;entryX=0.35;entryY=0;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-11" value="Atomic Pop">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="769" y="466" />
+              <mxPoint x="769" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-25" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-10" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.79;entryX=0.58;entryY=0;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-11" value="Atomic Pop">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="976" y="466" />
+              <mxPoint x="976" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-26" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-9" style="curved=1;dashed=1;dashPattern=2 3;startArrow=none;endArrow=block;exitX=0.03;exitY=1;entryX=0.22;entryY=0;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-12" value="Metrics Monitoring">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="465" y="466" />
+              <mxPoint x="465" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-27" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-10" style="curved=1;dashed=1;dashPattern=2 3;startArrow=none;endArrow=block;exitX=0;exitY=0.92;entryX=0.87;entryY=0;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-12" value="Metrics Monitoring">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="643" y="466" />
+              <mxPoint x="643" y="540" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-28" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-11" style="curved=1;startArrow=block;endArrow=block;exitX=0.62;exitY=1;entryX=0.5;entryY=0;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-13" value="Row Lock: FOR UPDATE SKIP LOCKED">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1036" y="842" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-29" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-12" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=1;entryY=0.02;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-14" value="Scale Pods 1 to N Based on Queue Depth">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="541" y="842" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-30" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-15" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0;entryY=0.39;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-13" value="Drip Feed Trust Metrics / Hydrate">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="185" y="842" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-31" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-11" style="curved=1;startArrow=none;endArrow=block;exitX=0.42;exitY=1;entryX=1;entryY=0.23;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-14" value="Inject Locked Profile State &amp; Token">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="816" y="842" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-32" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-14" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=1;entryX=0;entryY=0.17;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-16" value="Execute Automation Loop">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="185" y="1099" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-33" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-16" style="curved=1;startArrow=none;endArrow=block;exitX=0.03;exitY=0.99;entryX=0.5;entryY=-0.01;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-17" value="Filter 1: Static Assets .js / .css / Images">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="240" y="1251" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-34" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-16" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.7;entryX=0.5;entryY=-0.01;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-18" value="Filter 2: Raw SSE Stream / Backend API Conversations">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1232" y="1251" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-35" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-17" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=0.99;entryX=0;entryY=0.23;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-19" value="Fetch UI Wrapper">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="240" y="1452" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-36" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-18" style="curved=1;startArrow=none;endArrow=block;exitX=0.5;exitY=0.99;entryX=1;entryY=0.39;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-19" value="Stream Intercept Token Data">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1232" y="1452" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-37" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-16" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.36;entryX=1;entryY=0.72;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-8" value="Parse Stream Chunks to Structured JSON">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1305" y="1099" />
+              <mxPoint x="1305" y="237" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="pyFWPDRvOGwhKdszwlT8-38" edge="1" parent="1" source="pyFWPDRvOGwhKdszwlT8-8" style="curved=1;startArrow=none;endArrow=block;exitX=1;exitY=0.11;entryX=1;entryY=0.81;rounded=0;" target="pyFWPDRvOGwhKdszwlT8-6" value="Populate UI Metrics">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1143" y="121" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

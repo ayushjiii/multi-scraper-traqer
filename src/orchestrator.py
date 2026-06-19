@@ -96,15 +96,17 @@ class Orchestrator:
             error_msg = str(e)
             print(f"[ORCHESTRATOR:{self.engine.upper()}] Task {task_id} failed: {error_msg}")
             
-            if "Proxy IP burned" in error_msg and profile.get("proxy_string"):
-                try:
-                    await self.db.execute(
-                        "DELETE FROM proxies WHERE connection_string = $1",
-                        profile["proxy_string"]
-                    )
-                    print(f"[ORCHESTRATOR:{self.engine.upper()}] Burned proxy purged.")
-                except Exception:
-                    pass
+            # Smart Engine-Specific Proxy Banning
+            if any(term in error_msg for term in ["Proxy IP burned", "Cloudflare", "Verification wall", "Timeout"]):
+                if profile.get("proxy_string"):
+                    try:
+                        banned_col = f"{self.engine}_banned"
+                        await self.db.execute(f"""
+                            UPDATE proxies SET {banned_col} = TRUE WHERE connection_string = $1
+                        """, profile["proxy_string"])
+                        print(f"[ORCHESTRATOR:{self.engine.upper()}] Proxy flagged as banned for this engine.")
+                    except Exception:
+                        pass
 
         finally:
             if profile:

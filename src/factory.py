@@ -15,7 +15,6 @@ class ProfileFactory:
             raise ValueError(f"Unsupported engine: {self.engine}")
             
         self.config = ENGINE_PROFILES[self.engine]
-        # Profiles separated by engine physically on disk
         self.profiles_dir = os.path.join(os.getcwd(), f"profiles/{self.engine}")
         os.makedirs(self.profiles_dir, exist_ok=True)
 
@@ -34,13 +33,14 @@ class ProfileFactory:
         profile_path = os.path.join(self.profiles_dir, profile_name)
         proxy_str    = None
         profile_id   = None
+        
+        banned_col = f"{self.engine}_banned"
 
-        # Atomic lock
         async with self.db.pool.acquire() as conn:
             async with conn.transaction():
-                proxy_row = await conn.fetchrow("""
+                proxy_row = await conn.fetchrow(f"""
                     SELECT connection_string FROM proxies
-                    WHERE status = 'ACTIVE'
+                    WHERE status = 'ACTIVE' AND {banned_col} = FALSE
                     AND connection_string NOT IN (
                         SELECT proxy_string FROM browser_profiles
                         WHERE status IN ('AVAILABLE', 'BUSY') AND proxy_string IS NOT NULL
@@ -66,12 +66,9 @@ class ProfileFactory:
 
         try:
             async with AsyncCamoufox(
-                headless=True,
-                persistent_context=True,
-                user_data_dir=profile_path,
-                proxy=camoufox_proxy,
-                geoip=True,
-                locale="en-US"
+                headless=True, persistent_context=True,
+                user_data_dir=profile_path, proxy=camoufox_proxy,
+                geoip=True, locale="en-US"
             ) as browser:
                 page = browser.pages[0] if browser.pages else await browser.new_page()
                 page.on("pageerror", lambda exc: None)
@@ -86,8 +83,7 @@ class ProfileFactory:
                             await route.abort()
                             return
                         await route.continue_()
-                    except Exception:
-                        pass
+                    except Exception: pass
 
                 await page.route("**/*", safe_route_handler)
 
@@ -95,37 +91,34 @@ class ProfileFactory:
                 await page.goto(self.config['url'], wait_until="domcontentloaded", timeout=60000)
                 await asyncio.sleep(4)
 
+                # --- ACTIVE DOM NUKE ---
                 await page.evaluate('''() => {
                     const style = document.createElement('style');
                     style.innerHTML = `
-                        iframe[src*="smartlock"], iframe[src*="account"], iframe[title*="Google"],
-                        div[role="dialog"], .cdk-overlay-container, [class*="backdrop"],
-                        #credential_picker_container {
-                            display: none !important; opacity: 0 !important;
-                            pointer-events: none !important; z-index: -9999 !important;
-                            visibility: hidden !important;
+                        iframe[src*="smartlock"], iframe[src*="account"], iframe[title*="Google"], 
+                        div[role="dialog"], .cdk-overlay-container, [class*="backdrop"], 
+                        #credential_picker_container, [class*="signup"], [class*="login"] {
+                            display: none !important; opacity: 0 !important; pointer-events: none !important;
+                            z-index: -9999 !important; visibility: hidden !important;
                         }
                     `;
                     document.head.appendChild(style);
+
+                    setInterval(() => {
+                        document.querySelectorAll(`
+                            iframe[src*="smartlock"], div[role="dialog"], 
+                            .cdk-overlay-container, #credential_picker_container
+                        `).forEach(el => el.remove());
+                    }, 500);
                 }''')
                 await asyncio.sleep(1)
 
-                input_selector = self.config['input_selector']
-                input_element = page.locator(input_selector).first
+                input_element = page.locator(self.config['input_selector']).first
                 await input_element.wait_for(state="attached", timeout=45000)
                 await input_element.focus()
-                
                 await page.keyboard.insert_text(self.config['tiny_prompt'])
                 await asyncio.sleep(1.0)
                 await page.keyboard.press("Enter")
-                await asyncio.sleep(1.0)
-                
-                send_btn_sel = self.config['send_button_selector']
-                await page.evaluate(f'''(sel) => {{
-                    const btn = document.querySelector(sel);
-                    if (btn && !btn.disabled) btn.click();
-                }}''', send_btn_sel)
-                
                 await asyncio.sleep(3)
                 print(f"[FACTORY:{self.engine.upper()}] Tiny prompt accepted. Session trusted.")
 
@@ -133,28 +126,18 @@ class ProfileFactory:
             error_msg = str(e)
             print(f"[FACTORY:{self.engine.upper()}] Error warming {self.engine}: {error_msg}")
 
-            try:
-                await self.db.execute("DELETE FROM browser_profiles WHERE id = $1", profile_id)
-            except Exception:
-                pass
+            try: await self.db.execute("DELETE FROM browser_profiles WHERE id = $1", profile_id)
+            except Exception: pass
 
-            if any(sig in error_msg for sig in [
-                "NS_ERROR_PROXY_CONNECTION_REFUSED",
-                "Failed to connect to proxy",
-                "Timeout",
-                "Target page, context or browser has been closed"
-            ]):
+            if any(sig in error_msg for sig in ["NS_ERROR_PROXY", "Timeout", "closed", "Connection refused"]):
                 try:
-                    await self.db.execute("DELETE FROM proxies WHERE connection_string = $1", proxy_str)
-                    print(f"[FACTORY:{self.engine.upper()}] Bad proxy purged.")
-                except Exception:
-                    pass
+                    await self.db.execute(f"UPDATE proxies SET {banned_col} = TRUE WHERE connection_string = $1", proxy_str)
+                    print(f"[FACTORY:{self.engine.upper()}] Proxy flagged as banned for this engine.")
+                except Exception: pass
             raise
 
         await self.db.execute("""
-            UPDATE browser_profiles
-            SET status = 'AVAILABLE', storage_path = $1
-            WHERE id = $2
+            UPDATE browser_profiles SET status = 'AVAILABLE', storage_path = $1 WHERE id = $2
         """, profile_path, profile_id)
 
         print(f"[FACTORY:{self.engine.upper()}] Profile '{profile_name}' is AVAILABLE.")
@@ -164,22 +147,17 @@ class ProfileFactory:
         print(f"\n[FACTORY DAEMON:{self.engine.upper()}] Started. Target pool: {target_pool_size}.")
         while True:
             await self.db.execute(f"""
-                UPDATE browser_profiles
-                SET status = 'EXPIRED'
+                UPDATE browser_profiles SET status = 'EXPIRED'
                 WHERE status = 'AVAILABLE' AND engine_type = '{self.engine}'
                 AND created_at < NOW() - INTERVAL '{Config.PROFILE_TTL_MINUTES} minutes'
             """)
 
-            available_count = await self.db.fetchval(
-                "SELECT COUNT(*) FROM browser_profiles WHERE engine_type = $1 AND status = 'AVAILABLE'",
-                self.engine
+            available = await self.db.fetchval(
+                "SELECT COUNT(*) FROM browser_profiles WHERE engine_type = $1 AND status = 'AVAILABLE'", self.engine
             )
-            
-            if available_count < target_pool_size:
-                print(f"[FACTORY:{self.engine.upper()}] Pool low ({available_count}/{target_pool_size}). Warming...")
-                try:
-                    await self.warm_new_profile()
-                except Exception as e:
-                    pass
+            if available < target_pool_size:
+                print(f"[FACTORY:{self.engine.upper()}] Pool low ({available}/{target_pool_size}). Warming...")
+                try: await self.warm_new_profile()
+                except Exception: pass
 
             await asyncio.sleep(30)

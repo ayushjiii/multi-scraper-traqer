@@ -8,30 +8,27 @@ ENGINE_PROFILES = {
         "send_button_selector": 'button[data-testid="send-button"]',
         "login_wall_indicators": ['data-testid="login-button"', 'Log in to ChatGPT', 'Sign up'],
         "tiny_prompt": "hi",
-        "response_timeout_sec": 90,
-        "stability_threshold": 6,  # 3 seconds of no change
-        "injection_method": "fill" # ChatGPT prefers Playwright native fill
+        "injection_method": "fill",
+        "stream_indicators": ["backend-api/conversation"]
     },
     "perplexity": {
         "url": "https://www.perplexity.ai",
         "input_selector": 'textarea, [contenteditable="true"]',
         "response_selector": "div.prose, div.default.font-sans",
-        "send_button_selector": 'button[aria-label*="Submit"]',
-        "login_wall_indicators": ['Sign in', 'Sign up', 'restricted'],
+        "send_button_selector": 'button[aria-label*="Submit"], button[type="submit"], button:has(svg)',
+        "login_wall_indicators": ['Please verify you are a human', 'cf-error', 'unusual traffic', 'Access denied'],
         "tiny_prompt": "hi",
-        "response_timeout_sec": 120,
-        "stability_threshold": 6,
-        "injection_method": "hardware" # Perplexity needs raw hardware keystrokes
+        "injection_method": "hardware",
+        "stream_indicators": ["rest/thread", "rest/ask", "socket.io", "query"]
     },
     "gemini": {
         "url": "https://gemini.google.com/app",
         "input_selector": 'rich-textarea, div[contenteditable="true"], textarea:visible',
         "response_selector": "message-content, .message-content, div.message-text",
         "send_button_selector": 'button[aria-label*="Send"]',
-        "login_wall_indicators": ['Sign in', 'Create account', 'requires authentication'],
+        "login_wall_indicators": ['Sign in to continue', 'Create account', 'requires authentication'],
         "tiny_prompt": "hi",
-        "response_timeout_sec": 120,
-        "stability_threshold": 6,
-        "injection_method": "hardware" # Gemini needs raw hardware keystrokes
+        "injection_method": "hardware",
+        "stream_indicators": ["batchexecute", "chat"]
     }
 }
