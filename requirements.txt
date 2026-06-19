@@ -1,0 +1,10 @@
+camoufox[geoip]==0.4.11
+asyncpg
+redis==5.0.4
+python-dotenv==1.0.1
+scipy
+python-ghost-cursor==0.1.1  
+
+# make sure to fire this cmds because ghostworkers isnt updated yet for the python 3.13
+# $env:BEZIER_NO_EXTENSION="True"
+# $env:BEZIER_IGNORE_VERSION_CHECK="True"

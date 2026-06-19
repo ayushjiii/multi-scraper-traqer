@@ -1,0 +1,24 @@
+# 1. Credentials & Secrets (CRITICAL)
+.env
+proxies_list.txt
+
+# 2. Virtual Environments
+.venv/
+venv/
+env/
+
+# 3. Dynamic Output & Heavy Data
+profiles/
+screenshots/
+*.log
+
+# 4. Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 5. IDE & OS Files
+.vscode/
+.idea/
+.DS_Store
