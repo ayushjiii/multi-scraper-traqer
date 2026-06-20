@@ -2,7 +2,6 @@
 import os
 import time
 import asyncio
-import json
 from camoufox.async_api import AsyncCamoufox
 from src.engine_profiles import ENGINE_PROFILES
 
@@ -43,7 +42,6 @@ class ExtractionWorker:
             page = browser.pages[0] if browser.pages else await browser.new_page()
             page.on("pageerror", lambda exc: None)
 
-            # State Tracker for Playwright Hooks
             network_state = {
                 "stream_started": False,
                 "stream_finished": False,
@@ -51,9 +49,8 @@ class ExtractionWorker:
                 "sources": []
             }
 
-            # --- THE RECURSIVE SOURCE HUNTER ---
+            # --- RECURSIVE SOURCE HUNTER ---
             def extract_urls(obj):
-                """Recursively hunts through massive JSON payloads for hidden citations."""
                 found = []
                 if isinstance(obj, dict):
                     for key, value in obj.items():
@@ -69,30 +66,34 @@ class ExtractionWorker:
             # --- NATIVE PLAYWRIGHT INTERCEPTION ---
             async def handle_response(response):
                 url = response.url.lower()
-                
-                # Check for End of Stream
+                # FIX: Ignore autocomplete network traps
+                if "suggest" in url or "autocomplete" in url:
+                    return
+
                 if any(ind in url for ind in self.config["stream_indicators"]):
                     network_state["stream_started"] = True
                     network_state["last_packet_time"] = time.time()
                     if response.status == 200:
                         network_state["stream_finished"] = True
 
-                # Siphon source URLs out of API/GraphQL payloads
                 try:
                     if any(x in url for x in ["graphql", "api", "rest"]):
                         data = await response.json()
                         extracted = extract_urls(data)
                         if extracted:
-                            # Filter out internal tracking garbage
                             clean_urls = [u for u in extracted if "perplexity.ai" not in u and "sentry.io" not in u]
                             if clean_urls:
                                 network_state["sources"].extend(clean_urls)
-                                print(f"[WORKER:{self.engine.upper()}] Siphoned {len(clean_urls)} hidden URLs from network tree.")
+                                print(f"[WORKER:{self.engine.upper()}] Siphoned {len(clean_urls)} source URLs out of API payload.")
                 except Exception:
                     pass
 
             def handle_websocket(ws):
                 url = ws.url.lower()
+                # FIX: Ignore autocomplete network traps
+                if "suggest" in url or "autocomplete" in url:
+                    return
+
                 if any(ind in url for ind in self.config["stream_indicators"]):
                     network_state["stream_started"] = True
                     network_state["last_packet_time"] = time.time()
@@ -108,11 +109,9 @@ class ExtractionWorker:
             def mark_socket_closed():
                 network_state["stream_finished"] = True
 
-            # Register Hooks
             page.on("response", lambda r: asyncio.ensure_future(handle_response(r)))
             page.on("websocket", handle_websocket)
 
-            # Block Trackers
             async def route_filter(route):
                 try:
                     if route.request.resource_type == "media":
@@ -122,12 +121,11 @@ class ExtractionWorker:
                         await route.abort()
                         return
                     await route.continue_()
-                except Exception:
-                    pass
+                except Exception: pass
 
             await page.route("**/*", route_filter)
 
-            # --- NAVIGATE & CHECK ---
+            # --- NAVIGATE & ACTIVE OVERLAY SHIELD ---
             print(f"[WORKER:{self.engine.upper()}] Navigating to {self.config['url']}...")
             await page.goto(self.config['url'], wait_until="domcontentloaded", timeout=60000)
             
@@ -137,7 +135,6 @@ class ExtractionWorker:
                 if indicator in page_text:
                     raise Exception("Proxy IP burned. Cloudflare / Verification wall detected on load.")
             
-            # ACTIVE DOM NUKE
             await page.evaluate('''() => {
                 const style = document.createElement('style');
                 style.innerHTML = `
@@ -161,7 +158,6 @@ class ExtractionWorker:
             # --- INPUT INJECTION ---
             input_element = page.locator(self.config["input_selector"]).first
             await input_element.wait_for(state="attached", timeout=45000)
-            
             await input_element.click()
             await asyncio.sleep(0.5)
 
@@ -171,44 +167,68 @@ class ExtractionWorker:
                 await page.keyboard.press("Control+A")
                 await page.keyboard.press("Backspace")
                 await asyncio.sleep(0.2)
-                await page.keyboard.type(prompt, delay=15)
+                # FIX: Slightly slower typing to ensure React captures it
+                await page.keyboard.type(prompt, delay=25)
                 
+            # FIX: Give the UI a full second to process the text and enable the submit button
             await asyncio.sleep(1.0)
             
-            # Dispatch
+            # FIX: Press Escape to close any autocomplete dropdowns that might block the Enter key
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.5)
+
+            # FIX: Bruteforce JS Clicker. Finds the specific submit button inside the text area's parent container
             try:
-                send_btn = page.locator(self.config["send_button_selector"]).first
-                if await send_btn.count() > 0 and await send_btn.is_visible():
-                    await send_btn.click()
-            except Exception:
-                pass
+                await page.evaluate('''() => {
+                    const textareas = document.querySelectorAll('textarea, [contenteditable="true"]');
+                    if (textareas.length > 0) {
+                        // Find the button closest to the text box
+                        const btn = textareas[0].closest('.group, div, form').querySelector('button[aria-label*="Submit"], button:has(svg)');
+                        if (btn && !btn.disabled) {
+                            btn.click();
+                        }
+                    }
+                }''')
+            except Exception: pass
 
-            await page.keyboard.press("Enter")
-            print(f"[WORKER:{self.engine.upper()}] Prompt dispatched. Awaiting Protocol Stream...")
+            # Backup native Enter press with a hard delay
+            await page.keyboard.press("Enter", delay=100)
+            
+            print(f"[WORKER:{self.engine.upper()}] Prompt dispatched. Awaiting Stream...")
 
-            # --- SMART NETWORK TRACKING ---
+            # --- STREAM TIMING LOOP ---
             stream_detected = False
-            for _ in range(30):
+            for _ in range(15):
                 if network_state["stream_started"]:
                     stream_detected = True
                     break
                 await asyncio.sleep(1)
 
-            if not stream_detected:
-                debug_path = os.path.join(self.screenshot_dir, f"DEBUG_FAIL_{task_id}.jpg")
-                await page.screenshot(path=debug_path, full_page=True, type="jpeg")
-                raise Exception("Protocol Monitor failed to catch network stream allocation.")
-
-            print(f"[WORKER:{self.engine.upper()}] Stream active. Tracking transaction flow...")
-
-            for tick in range(90):
-                await asyncio.sleep(1.0)
-                silence_duration = time.time() - network_state["last_packet_time"]
-                
-                # If backend closed stream OR hasn't sent data in 4 seconds
-                if network_state["stream_finished"] or silence_duration >= 4.0:
-                    print(f"[WORKER:{self.engine.upper()}] Network pipeline normalized (Silence: {silence_duration:.1f}s).")
-                    break
+            if stream_detected:
+                print(f"[WORKER:{self.engine.upper()}] Stream verified. Tracking network data flow...")
+                for tick in range(90):
+                    await asyncio.sleep(1.0)
+                    silence_duration = time.time() - network_state["last_packet_time"]
+                    if network_state["stream_finished"] or silence_duration >= 4.0:
+                        print(f"[WORKER:{self.engine.upper()}] Stream completed via network diagnostics.")
+                        break
+            else:
+                print(f"[WORKER:{self.engine.upper()}] Stream fallback triggered. Monitoring UI mutation ticks...")
+                prev_len = 0
+                stable_ticks = 0
+                for _ in range(60):
+                    await asyncio.sleep(1.0)
+                    text = await page.evaluate(f'''(sel) => {{
+                        const els = document.querySelectorAll(sel);
+                        return els.length > 0 ? els[els.length-1].innerText : "";
+                    }}''', self.config["response_selector"])
+                    curr_len = len(text)
+                    if curr_len > 10 and curr_len == prev_len:
+                        stable_ticks += 1
+                        if stable_ticks >= 4: break
+                    else:
+                        stable_ticks = 0
+                        prev_len = curr_len
 
             await asyncio.sleep(2.0)
 
@@ -219,9 +239,12 @@ class ExtractionWorker:
             }}''', self.config["response_selector"])
 
             if not final_response or len(final_response.strip()) < 5:
-                raise Exception("Network stream stabilized but text extraction targets remained unpopulated.")
+                # FIX: Force a debug screenshot so we can see what the UI actually looks like!
+                debug_path = os.path.join(self.screenshot_dir, f"DEBUG_EMPTY_DOM_{task_id}.jpg")
+                await page.screenshot(path=debug_path, full_page=True, type="jpeg")
+                raise Exception(f"Data channel closed but text targets remained unpopulated. Saved DOM state to {debug_path}")
 
-            # Brute Force Formatting
+            # Brute Force Typography Override
             await page.evaluate("""() => {
                 document.documentElement.classList.remove('dark');
                 document.documentElement.classList.add('light');
@@ -233,7 +256,7 @@ class ExtractionWorker:
                 document.body.style.setProperty('overflow', 'visible', 'important');
             }""")
 
-            # Pre-Screenshot Purge
+            # Document Element Purging
             await page.evaluate("""() => {
                 const selectorsToNuke = ['header', 'nav', 'footer', '[class*="sticky"]', '[class*="fixed"]', '[role="dialog"]'];
                 selectorsToNuke.forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
@@ -247,13 +270,10 @@ class ExtractionWorker:
 
             shot_path = os.path.join(self.screenshot_dir, f"{task_id}.jpg")
             await page.screenshot(path=shot_path, full_page=True, type="jpeg", quality=90)
-            print(f"[WORKER:{self.engine.upper()}] Extraction completed successfully: {shot_path}")
+            print(f"[WORKER:{self.engine.upper()}] Execution lifecycle clean. Saved: {shot_path}")
             
-            # Filter unique URLs before saving
-            unique_sources = list(set(network_state["sources"]))
-
             return {
                 "ai_response":     final_response,
-                "sources":         unique_sources,
+                "sources":         list(set(network_state["sources"])),
                 "screenshot_path": shot_path
             }

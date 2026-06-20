@@ -33,8 +33,7 @@ class ProfileFactory:
         profile_path = os.path.join(self.profiles_dir, profile_name)
         proxy_str    = None
         profile_id   = None
-        
-        banned_col = f"{self.engine}_banned"
+        banned_col   = f"{self.engine}_banned"
 
         async with self.db.pool.acquire() as conn:
             async with conn.transaction():
@@ -89,7 +88,28 @@ class ProfileFactory:
 
                 print(f"[FACTORY:{self.engine.upper()}] Navigating to {self.config['url']}...")
                 await page.goto(self.config['url'], wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(4)
+                
+                # --- AUTOMATED TURNSTILE SOLVER ---
+                print(f"[FACTORY:{self.engine.upper()}] Scanning for verification frames...")
+                await asyncio.sleep(3)
+                try:
+                    for frame in page.frames:
+                        if "challenge" in frame.url or "turnstile" in frame.url:
+                            print(f"[FACTORY:{self.engine.upper()}] Turnstile detected! Simulating human clearance interaction...")
+                            checkbox = frame.locator('input[type="checkbox"], .mark, #challenge-stage').first
+                            if await checkbox.count() > 0 and await checkbox.is_visible():
+                                box = await checkbox.bounding_box()
+                                if box:
+                                    target_x = box["x"] + (box["width"] / 2)
+                                    target_y = box["y"] + (box["height"] / 2)
+                                    await page.mouse.move(target_x, target_y, steps=15)
+                                    await asyncio.sleep(0.5)
+                                    await page.mouse.click(target_x, target_y)
+                                    print(f"[FACTORY:{self.engine.upper()}] Verification coordinates clicked.")
+                                    await asyncio.sleep(5)
+                            break
+                except Exception as e:
+                    print(f"[FACTORY:{self.engine.upper()}] Anti-bot scan exception: {e}")
 
                 # --- ACTIVE DOM NUKE ---
                 await page.evaluate('''() => {
@@ -111,7 +131,7 @@ class ProfileFactory:
                         `).forEach(el => el.remove());
                     }, 500);
                 }''')
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
 
                 input_element = page.locator(self.config['input_selector']).first
                 await input_element.wait_for(state="attached", timeout=45000)

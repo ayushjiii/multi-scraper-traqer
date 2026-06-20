@@ -11,16 +11,18 @@ ENGINE_PROFILES = {
         "injection_method": "fill",
         "stream_indicators": ["backend-api/conversation"]
     },
+    
     "perplexity": {
         "url": "https://www.perplexity.ai",
         "input_selector": 'textarea, [contenteditable="true"]',
-        "response_selector": "div.prose, div.default.font-sans",
+        "response_selector": "div.prose, div[class*='prose'], div.break-words, div[dir='auto'], .min-w-0 > div > div",
         "send_button_selector": 'button[aria-label*="Submit"], button[type="submit"], button:has(svg)',
         "login_wall_indicators": ['Please verify you are a human', 'cf-error', 'unusual traffic', 'Access denied'],
         "tiny_prompt": "hi",
         "injection_method": "hardware",
         "stream_indicators": ["rest/thread", "rest/ask", "socket.io", "query"]
     },
+
     "gemini": {
         "url": "https://gemini.google.com/app",
         "input_selector": 'rich-textarea, div[contenteditable="true"], textarea:visible',

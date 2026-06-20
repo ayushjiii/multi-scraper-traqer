@@ -96,7 +96,6 @@ class Orchestrator:
             error_msg = str(e)
             print(f"[ORCHESTRATOR:{self.engine.upper()}] Task {task_id} failed: {error_msg}")
             
-            # Smart Engine-Specific Proxy Banning
             if any(term in error_msg for term in ["Proxy IP burned", "Cloudflare", "Verification wall", "Timeout"]):
                 if profile.get("proxy_string"):
                     try:
