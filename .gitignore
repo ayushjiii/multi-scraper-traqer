@@ -22,3 +22,5 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+.agents
+graphify-out

@@ -1,35 +1,69 @@
-# src/worker.py
 import os
-import time
 import asyncio
 from camoufox.async_api import AsyncCamoufox
-from src.engine_profiles import ENGINE_PROFILES
 
 class ExtractionWorker:
-    def __init__(self, profile_path: str, engine: str, proxy_string: str = None):
+    def __init__(self, profile_path: str, proxy_string: str = None):
         self.profile_path = profile_path
-        self.engine = engine.lower()
         self.proxy_string = proxy_string
-        
-        self.screenshot_dir = os.path.join(os.getcwd(), f"screenshots/{self.engine}")
+        self.screenshot_dir = os.path.join(os.getcwd(), "screenshots")
         os.makedirs(self.screenshot_dir, exist_ok=True)
-        self.config = ENGINE_PROFILES[self.engine]
 
-    def _parse_proxy(self, proxy_str: str) -> dict | None:
-        if not proxy_str:
-            return None
-        parts = proxy_str.split(":")
-        if len(parts) != 4:
-            return None
-        return {
-            "server":   f"http://{parts[0]}:{parts[1]}",
-            "username": parts[2],
-            "password": parts[3]
+        self.engine_configs = {
+            "chatgpt": {
+                "input": '#prompt-textarea, [contenteditable="true"]',
+                "assistant": "[data-message-author-role='assistant'], article",
+                "send_btn": 'button[data-testid="send-button"]',
+                "stop_btn": 'button[data-testid="stop-button"], button[aria-label*="Stop"]'
+            },
+            "perplexity": {
+                "input": 'textarea, [contenteditable="true"]',
+                "assistant": "div.prose, div.default.font-sans, div.break-words",
+                "send_btn": 'button[aria-label*="Submit"], button:has(svg)',
+                "stop_btn": 'button[aria-label*="Stop"]'
+            },
+            "gemini": {
+                "input": 'rich-textarea, div[contenteditable="true"], textarea:visible',
+                "assistant": "message-content, .message-content, div.message-text",
+                "send_btn": 'button[aria-label*="Send"]',
+                "stop_btn": 'button[aria-label*="Stop"]'
+            }
         }
 
-    async def execute_task(self, prompt: str, task_id: str):
-        print(f"[WORKER:{self.engine.upper()}] Launching Profile: {os.path.basename(self.profile_path)}")
-        camoufox_proxy = self._parse_proxy(self.proxy_string)
+    def _get_engine_type(self, url: str) -> str:
+        if "chatgpt.com" in url: return "chatgpt"
+        if "perplexity.ai" in url: return "perplexity"
+        if "gemini.google.com" in url: return "gemini"
+        return "chatgpt"
+
+    async def execute_task(self, engine_url: str, prompt: str, task_id: str):
+        """Execute a scraping task for the given engine URL.
+
+        Implements the Hybrid Extraction Strategy for the Perplexity engine:
+        * Network interception via response/websocket events.
+        * Smart silence timer (4 s of inactivity) to detect generation end.
+        * DOM extraction after network signals DONE.
+        * Safe removal of Google/consent pop‑ups without breaking Tailwind UI.
+        * Graceful soft‑ban detection.
+        """
+        import time
+        engine_type = self._get_engine_type(engine_url)
+        config = self.engine_configs[engine_type]
+
+        print(f"[WORKER] Launching [{engine_type.upper()}] with profile: {os.path.basename(self.profile_path)}")
+
+        # ---------------------------------------------------------------------
+        # Browser launch
+        # ---------------------------------------------------------------------
+        camoufox_proxy = None
+        if self.proxy_string:
+            parts = self.proxy_string.split(":")
+            if len(parts) == 4:
+                camoufox_proxy = {
+                    "server": f"http://{parts[0]}:{parts[1]}",
+                    "username": parts[2],
+                    "password": parts[3]
+                }
 
         async with AsyncCamoufox(
             headless=True,
@@ -42,238 +76,163 @@ class ExtractionWorker:
             page = browser.pages[0] if browser.pages else await browser.new_page()
             page.on("pageerror", lambda exc: None)
 
-            network_state = {
-                "stream_started": False,
-                "stream_finished": False,
-                "last_packet_time": time.time(),
-                "sources": []
-            }
-
-            # --- RECURSIVE SOURCE HUNTER ---
-            def extract_urls(obj):
-                found = []
-                if isinstance(obj, dict):
-                    for key, value in obj.items():
-                        if key.lower() in ["url", "link", "source_url", "domain"] and isinstance(value, str) and value.startswith("http"):
-                            found.append(value)
-                        else:
-                            found.extend(extract_urls(value))
-                elif isinstance(obj, list):
-                    for item in obj:
-                        found.extend(extract_urls(item))
-                return found
-
-            # --- NATIVE PLAYWRIGHT INTERCEPTION ---
-            async def handle_response(response):
-                url = response.url.lower()
-                # FIX: Ignore autocomplete network traps
-                if "suggest" in url or "autocomplete" in url:
-                    return
-
-                if any(ind in url for ind in self.config["stream_indicators"]):
-                    network_state["stream_started"] = True
-                    network_state["last_packet_time"] = time.time()
-                    if response.status == 200:
-                        network_state["stream_finished"] = True
-
-                try:
-                    if any(x in url for x in ["graphql", "api", "rest"]):
-                        data = await response.json()
-                        extracted = extract_urls(data)
-                        if extracted:
-                            clean_urls = [u for u in extracted if "perplexity.ai" not in u and "sentry.io" not in u]
-                            if clean_urls:
-                                network_state["sources"].extend(clean_urls)
-                                print(f"[WORKER:{self.engine.upper()}] Siphoned {len(clean_urls)} source URLs out of API payload.")
-                except Exception:
-                    pass
-
-            def handle_websocket(ws):
-                url = ws.url.lower()
-                # FIX: Ignore autocomplete network traps
-                if "suggest" in url or "autocomplete" in url:
-                    return
-
-                if any(ind in url for ind in self.config["stream_indicators"]):
-                    network_state["stream_started"] = True
-                    network_state["last_packet_time"] = time.time()
-                    ws.on("framereceived", lambda frame: update_socket_time(frame))
-                    ws.on("close", lambda: mark_socket_closed())
-
-            def update_socket_time(frame):
-                network_state["last_packet_time"] = time.time()
-                network_state["stream_started"] = True
-                if "done" in frame.text.lower() or "[done]" in frame.text:
-                    network_state["stream_finished"] = True
-
-            def mark_socket_closed():
-                network_state["stream_finished"] = True
-
-            page.on("response", lambda r: asyncio.ensure_future(handle_response(r)))
-            page.on("websocket", handle_websocket)
-
-            async def route_filter(route):
+            # -----------------------------------------------------------------
+            # Safe route handler – block trackers & media, but allow UI assets.
+            # -----------------------------------------------------------------
+            async def safe_route_handler(route):
                 try:
                     if route.request.resource_type == "media":
                         await route.abort()
                         return
-                    if any(t in route.request.url.lower() for t in ['analytics', 'telemetry', 'sentry', 'mixpanel']):
+                    url = route.request.url.lower()
+                    blocked_trackers = ["analytics", "telemetry", "sentry", "datadog", "mixpanel"]
+                    if any(tracker in url for tracker in blocked_trackers):
                         await route.abort()
                         return
                     await route.continue_()
-                except Exception: pass
+                except Exception:
+                    pass
 
-            await page.route("**/*", route_filter)
+            await page.route("**/*", safe_route_handler)
 
-            # --- NAVIGATE & ACTIVE OVERLAY SHIELD ---
-            print(f"[WORKER:{self.engine.upper()}] Navigating to {self.config['url']}...")
-            await page.goto(self.config['url'], wait_until="domcontentloaded", timeout=60000)
-            
-            await asyncio.sleep(2)
-            page_text = await page.content()
-            for indicator in self.config['login_wall_indicators']:
-                if indicator in page_text:
-                    raise Exception("Proxy IP burned. Cloudflare / Verification wall detected on load.")
-            
+            # -----------------------------------------------------------------
+            # Navigation
+            # -----------------------------------------------------------------
+            print(f"[WORKER] Navigating to {engine_url}...")
+            await page.goto(engine_url, wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(4)
+
+            # -----------------------------------------------------------------
+            # Safe Popup Assassin – remove Google sign‑in iframes & click consent.
+            # -----------------------------------------------------------------
+            print("[WORKER] Installing safe popup assassin...")
             await page.evaluate('''() => {
-                const style = document.createElement('style');
-                style.innerHTML = `
-                    iframe[src*="smartlock"], iframe[src*="account"], iframe[title*="Google"], 
-                    div[role="dialog"], .cdk-overlay-container, [class*="backdrop"], 
-                    #credential_picker_container, [class*="signup"], [class*="login"] {
-                        display: none !important; opacity: 0 !important; pointer-events: none !important;
-                        z-index: -9999 !important; visibility: hidden !important;
-                    }
-                `;
-                document.head.appendChild(style);
-
-                setInterval(() => {
-                    document.querySelectorAll(`
-                        iframe[src*="smartlock"], div[role="dialog"], 
-                        .cdk-overlay-container, #credential_picker_container
-                    `).forEach(el => el.remove());
-                }, 500);
-            }''')
-
-            # --- INPUT INJECTION ---
-            input_element = page.locator(self.config["input_selector"]).first
-            await input_element.wait_for(state="attached", timeout=45000)
-            await input_element.click()
-            await asyncio.sleep(0.5)
-
-            if self.config["injection_method"] == "fill":
-                await input_element.fill(prompt)
-            else:
-                await page.keyboard.press("Control+A")
-                await page.keyboard.press("Backspace")
-                await asyncio.sleep(0.2)
-                # FIX: Slightly slower typing to ensure React captures it
-                await page.keyboard.type(prompt, delay=25)
-                
-            # FIX: Give the UI a full second to process the text and enable the submit button
-            await asyncio.sleep(1.0)
-            
-            # FIX: Press Escape to close any autocomplete dropdowns that might block the Enter key
-            await page.keyboard.press("Escape")
-            await asyncio.sleep(0.5)
-
-            # FIX: Bruteforce JS Clicker. Finds the specific submit button inside the text area's parent container
-            try:
-                await page.evaluate('''() => {
-                    const textareas = document.querySelectorAll('textarea, [contenteditable="true"]');
-                    if (textareas.length > 0) {
-                        // Find the button closest to the text box
-                        const btn = textareas[0].closest('.group, div, form').querySelector('button[aria-label*="Submit"], button:has(svg)');
-                        if (btn && !btn.disabled) {
+                const removeBadIframes = () => {
+                    document.querySelectorAll('iframe[src*="smartlock"], iframe[src*="accounts"], iframe[src*="google"], #credential_picker_container')
+                        .forEach(el => el.remove());
+                };
+                const clickConsent = () => {
+                    const buttons = Array.from(document.querySelectorAll('button, input[type="button"]'));
+                    buttons.forEach(btn => {
+                        const txt = (btn.textContent || "").trim().toLowerCase();
+                        if (txt.includes('got it') || txt.includes('accept')) {
                             btn.click();
                         }
-                    }
-                }''')
-            except Exception: pass
+                    });
+                };
+                // Initial clean‑up
+                removeBadIframes();
+                clickConsent();
+                // Keep cleaning every 500 ms
+                setInterval(() => { removeBadIframes(); clickConsent(); }, 500);
+            }''')
 
-            # Backup native Enter press with a hard delay
-            await page.keyboard.press("Enter", delay=100)
-            
-            print(f"[WORKER:{self.engine.upper()}] Prompt dispatched. Awaiting Stream...")
+            # -----------------------------------------------------------------
+            # Prompt injection – type into the input and press Enter.
+            # -----------------------------------------------------------------
+            print("[WORKER] Injecting prompt...")
+            input_element = page.locator(config["input"]).first
+            try:
+                await input_element.wait_for(state="attached", timeout=45000)
+            except asyncio.TimeoutError:
+                raise Exception("Proxy IP burned. Verification wall or soft-ban detected.")
+            await input_element.click()
+            await asyncio.sleep(0.5)
+            await input_element.fill(prompt)
+            await asyncio.sleep(0.5)
+            await input_element.press("Enter")
+            print("[WORKER] Prompt dispatched – monitoring network activity.")
 
-            # --- STREAM TIMING LOOP ---
-            stream_detected = False
-            for _ in range(15):
-                if network_state["stream_started"]:
-                    stream_detected = True
+            # -----------------------------------------------------------------
+            # Network listeners for the Hybrid Extraction Strategy
+            # -----------------------------------------------------------------
+            last_activity = time.time()
+            silence_threshold = 4  # seconds of inactivity
+
+            def mark_activity(event_url: str):
+                # Ignore autocomplete/suggest traffic to avoid false positives
+                lower = event_url.lower()
+                if "suggest" in lower or "autocomplete" in lower:
+                    return
+                nonlocal last_activity
+                last_activity = time.time()
+
+            # Response events
+            page.on("response", lambda response: mark_activity(response.url))
+            # WebSocket events – Playwright provides "websocket" events on page
+            async def ws_message(ws, message):
+                mark_activity(ws.url)
+            page.on("websocket", lambda ws: ws.on("framereceived", lambda frame: mark_activity(ws.url)))
+
+            # -----------------------------------------------------------------
+            # Wait for smart silence timer – 4 s of no relevant network activity.
+            # -----------------------------------------------------------------
+            while True:
+                await asyncio.sleep(0.5)
+                if time.time() - last_activity >= silence_threshold:
                     break
-                await asyncio.sleep(1)
 
-            if stream_detected:
-                print(f"[WORKER:{self.engine.upper()}] Stream verified. Tracking network data flow...")
-                for tick in range(90):
-                    await asyncio.sleep(1.0)
-                    silence_duration = time.time() - network_state["last_packet_time"]
-                    if network_state["stream_finished"] or silence_duration >= 4.0:
-                        print(f"[WORKER:{self.engine.upper()}] Stream completed via network diagnostics.")
-                        break
-            else:
-                print(f"[WORKER:{self.engine.upper()}] Stream fallback triggered. Monitoring UI mutation ticks...")
-                prev_len = 0
-                stable_ticks = 0
-                for _ in range(60):
-                    await asyncio.sleep(1.0)
-                    text = await page.evaluate(f'''(sel) => {{
-                        const els = document.querySelectorAll(sel);
-                        return els.length > 0 ? els[els.length-1].innerText : "";
-                    }}''', self.config["response_selector"])
-                    curr_len = len(text)
-                    if curr_len > 10 and curr_len == prev_len:
-                        stable_ticks += 1
-                        if stable_ticks >= 4: break
-                    else:
-                        stable_ticks = 0
-                        prev_len = curr_len
+            print("[WORKER] Network silence detected – extracting final DOM output.")
 
-            await asyncio.sleep(2.0)
+            # -----------------------------------------------------------------
+            # DOM extraction – ensure the assistant message is visible.
+            # -----------------------------------------------------------------
+            ai_message = page.locator(config["assistant"]).last
+            try:
+                await ai_message.wait_for(state="visible", timeout=25000)
+            except Exception:
+                debug_path = os.path.join(self.screenshot_dir, f"DEBUG_{task_id}.jpg")
+                await page.screenshot(path=debug_path, full_page=True)
+                raise Exception(f"Generation element failed to anchor. Saved debug image to {debug_path}")
 
-            # --- EXTRACTION & SCREENSHOT ---
-            final_response = await page.evaluate(f'''(sel) => {{
-                const els = document.querySelectorAll(sel);
-                return els.length > 0 ? els[els.length-1].innerText : "";
-            }}''', self.config["response_selector"])
+            # -----------------------------------------------------------------
+            # Smooth scroll to force lazy‑loaded citations.
+            # -----------------------------------------------------------------
+            print("[WORKER] Scrolling to bottom to force lazy‑load renders...")
+            await page.evaluate('''async () => {
+                await new Promise(resolve => {
+                    let totalHeight = 0;
+                    const distance = 150;
+                    const timer = setInterval(() => {
+                        const scrollHeight = document.body.scrollHeight;
+                        window.scrollBy(0, distance);
+                        totalHeight += distance;
+                        if (totalHeight >= scrollHeight - window.innerHeight) {
+                            clearInterval(timer);
+                            resolve();
+                        }
+                    }, 50);
+                });
+                window.scrollTo(0, 0);
+            }''')
+            await asyncio.sleep(1.5)
 
-            if not final_response or len(final_response.strip()) < 5:
-                # FIX: Force a debug screenshot so we can see what the UI actually looks like!
-                debug_path = os.path.join(self.screenshot_dir, f"DEBUG_EMPTY_DOM_{task_id}.jpg")
-                await page.screenshot(path=debug_path, full_page=True, type="jpeg")
-                raise Exception(f"Data channel closed but text targets remained unpopulated. Saved DOM state to {debug_path}")
+            # -----------------------------------------------------------------
+            # Capture final response and screenshot.
+            # -----------------------------------------------------------------
+            final_response = await ai_message.inner_text()
+            if "Sign up and repeat" in final_response or "unlock the full potential" in final_response:
+                raise Exception("Hard Login Wall validation failed.")
 
-            # Brute Force Typography Override
-            await page.evaluate("""() => {
+            # Force Light Mode (optional aesthetic fix)
+            await page.evaluate('''() => {
                 document.documentElement.classList.remove('dark');
                 document.documentElement.classList.add('light');
                 document.body.style.setProperty('background-color', '#ffffff', 'important');
-                document.documentElement.style.setProperty('background-color', '#ffffff', 'important');
-                document.documentElement.style.setProperty('height', 'auto', 'important');
-                document.body.style.setProperty('height', 'auto', 'important');
-                document.documentElement.style.setProperty('overflow', 'visible', 'important');
-                document.body.style.setProperty('overflow', 'visible', 'important');
-            }""")
+            }''')
 
-            # Document Element Purging
-            await page.evaluate("""() => {
-                const selectorsToNuke = ['header', 'nav', 'footer', '[class*="sticky"]', '[class*="fixed"]', '[role="dialog"]'];
-                selectorsToNuke.forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
-                document.querySelectorAll('*').forEach(el => {
-                    const style = window.getComputedStyle(el);
-                    if (style.position === 'fixed' || style.position === 'sticky') el.remove();
-                });
-            }""")
-
-            await asyncio.sleep(1.5)
+            # Clean headers/footers – safe Tailwind‑aware selector list
+            await page.evaluate('''() => {
+                const selectors = ['header', 'nav', 'footer', '[class*="sticky"]', '[class*="fixed"]'];
+                selectors.forEach(sel => document.querySelectorAll(sel).forEach(el => el.remove()));
+            }''')
 
             shot_path = os.path.join(self.screenshot_dir, f"{task_id}.jpg")
             await page.screenshot(path=shot_path, full_page=True, type="jpeg", quality=90)
-            print(f"[WORKER:{self.engine.upper()}] Execution lifecycle clean. Saved: {shot_path}")
-            
+            print(f"[WORKER] Verification screenshot saved: {shot_path}")
+
             return {
-                "ai_response":     final_response,
-                "sources":         list(set(network_state["sources"])),
+                "ai_response": final_response,
+                "sources": [],
                 "screenshot_path": shot_path
             }

@@ -11,7 +11,6 @@ ENGINE_PROFILES = {
         "injection_method": "fill",
         "stream_indicators": ["backend-api/conversation"]
     },
-    
     "perplexity": {
         "url": "https://www.perplexity.ai",
         "input_selector": 'textarea, [contenteditable="true"]',
@@ -20,9 +19,8 @@ ENGINE_PROFILES = {
         "login_wall_indicators": ['Please verify you are a human', 'cf-error', 'unusual traffic', 'Access denied'],
         "tiny_prompt": "hi",
         "injection_method": "hardware",
-        "stream_indicators": ["rest/thread", "rest/ask", "socket.io", "query"]
+        "stream_indicators": ["rest/thread", "rest/ask", "query", "graphql", "socket.io"]
     },
-
     "gemini": {
         "url": "https://gemini.google.com/app",
         "input_selector": 'rich-textarea, div[contenteditable="true"], textarea:visible',

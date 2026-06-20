@@ -91,45 +91,49 @@ class ProfileFactory:
                 
                 # --- AUTOMATED TURNSTILE SOLVER ---
                 print(f"[FACTORY:{self.engine.upper()}] Scanning for verification frames...")
-                await asyncio.sleep(3)
+                # Wait for a frame that may contain the turnstile challenge
                 try:
-                    for frame in page.frames:
-                        if "challenge" in frame.url or "turnstile" in frame.url:
-                            print(f"[FACTORY:{self.engine.upper()}] Turnstile detected! Simulating human clearance interaction...")
-                            checkbox = frame.locator('input[type="checkbox"], .mark, #challenge-stage').first
-                            if await checkbox.count() > 0 and await checkbox.is_visible():
-                                box = await checkbox.bounding_box()
-                                if box:
-                                    target_x = box["x"] + (box["width"] / 2)
-                                    target_y = box["y"] + (box["height"] / 2)
-                                    await page.mouse.move(target_x, target_y, steps=15)
-                                    await asyncio.sleep(0.5)
-                                    await page.mouse.click(target_x, target_y)
-                                    print(f"[FACTORY:{self.engine.upper()}] Verification coordinates clicked.")
-                                    await asyncio.sleep(5)
-                            break
+                    # Wait up to 10 seconds for any new frame to be attached
+                    frame = await page.wait_for_event("frameattached", timeout=10000)
+                    if "challenge" in frame.url or "turnstile" in frame.url:
+                        print(f"[FACTORY:{self.engine.upper()}] Turnstile detected! Simulating human clearance interaction...")
+                        checkbox = frame.locator('input[type="checkbox"], .mark, #challenge-stage').first
+                        if await checkbox.count() > 0 and await checkbox.is_visible():
+                            box = await checkbox.bounding_box()
+                            if box:
+                                target_x = box["x"] + (box["width"] / 2)
+                                target_y = box["y"] + (box["height"] / 2)
+                                await page.mouse.move(target_x, target_y, steps=15)
+                                await asyncio.sleep(0.2)
+                                await page.mouse.click(target_x, target_y)
+                                print(f"[FACTORY:{self.engine.upper()}] Verification coordinates clicked.")
+                                await asyncio.sleep(2)
                 except Exception as e:
-                    print(f"[FACTORY:{self.engine.upper()}] Anti-bot scan exception: {e}")
+                    # No turnstile present or timeout – continue silently
+                    print(f"[FACTORY:{self.engine.upper()}] Turnstile not present or failed to solve: {e}")
 
-                # --- ACTIVE DOM NUKE ---
+                # --- SAFE DOM NUKE ---
                 await page.evaluate('''() => {
                     const style = document.createElement('style');
                     style.innerHTML = `
                         iframe[src*="smartlock"], iframe[src*="account"], iframe[title*="Google"], 
-                        div[role="dialog"], .cdk-overlay-container, [class*="backdrop"], 
-                        #credential_picker_container, [class*="signup"], [class*="login"] {
+                        #credential_picker_container {
                             display: none !important; opacity: 0 !important; pointer-events: none !important;
                             z-index: -9999 !important; visibility: hidden !important;
                         }
                     `;
                     document.head.appendChild(style);
 
-                    setInterval(() => {
-                        document.querySelectorAll(`
-                            iframe[src*="smartlock"], div[role="dialog"], 
-                            .cdk-overlay-container, #credential_picker_container
-                        `).forEach(el => el.remove());
-                    }, 500);
+                    // Remove unwanted iframes and credential picker once after page load
+                    const selectors = [
+                        'iframe[src*="smartlock"]',
+                        'iframe[src*="account"]',
+                        'iframe[title*="Google"]',
+                        '#credential_picker_container'
+                    ];
+                    selectors.forEach(sel => {
+                        document.querySelectorAll(sel).forEach(el => el.remove());
+                    });
                 }''')
                 await asyncio.sleep(2)
 
