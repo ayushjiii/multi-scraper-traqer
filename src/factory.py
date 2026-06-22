@@ -92,12 +92,6 @@ class ProfileFactory:
                 print(f"[FACTORY:{self.engine.upper()}] Navigating to {self.config['url']}...")
                 await page.goto(self.config['url'], wait_until="domcontentloaded", timeout=60000)
 
-                # ── Wait for React to hydrate ─────────────────────────────────
-                print(f"[FACTORY:{self.engine.upper()}] Waiting for React hydration...")
-                try:
-                    await page.wait_for_selector('#root > *', timeout=30000)
-                except Exception:
-                    pass
 
                 # ── Cloudflare JS Challenge Handler ───────────────────────────
                 # "Just a moment..." = Cloudflare running a JS integrity check.
@@ -128,6 +122,14 @@ class ProfileFactory:
                     raise RuntimeError(
                         f"Cloudflare block detected (url='{page.url}'). Marking proxy as banned."
                     )
+
+                # ── Wait for React to hydrate ─────────────────────────────────
+                # Now that Cloudflare is passed, the real app should load.
+                print(f"[FACTORY:{self.engine.upper()}] Waiting for React hydration...")
+                try:
+                    await page.wait_for_selector('#root > *', timeout=30000)
+                except Exception:
+                    pass
 
                 # ── Turnstile solver (runs only if a challenge frame appears) ─
                 try:
@@ -167,34 +169,37 @@ class ProfileFactory:
                 except Exception:
                     pass
 
-                # Remove Google One Tap iframes
-                await page.evaluate("""() => {
-                    document.querySelectorAll(
-                        'iframe[src*="accounts.google"], iframe[src*="smartlock"], #credential_picker_container'
-                    ).forEach(el => el.remove());
-                }""")
-
-                # ── Find and use the Lexical editor ──────────────────────────
-                # Use state="attached" (in DOM) not "visible" — the editor IS in
-                # the DOM even when the login modal sits on top of it.
-                # Then use click(force=True) to bypass pointer-events from the overlay.
-                print(f"[FACTORY:{self.engine.upper()}] Waiting for search editor...")
-                editor = page.locator('[data-lexical-editor="true"]').first
+                # Remove Google One Tap iframes and floating GSI cards
                 try:
-                    await editor.wait_for(state="attached", timeout=15000)
+                    await page.evaluate("""() => {
+                        const selectors = [
+                            'iframe[src*="accounts.google"]',
+                            'iframe[src*="smartlock"]',
+                            '#credential_picker_container',
+                            '#google-one-tap-container',
+                            'div[id*="gsi"]',
+                            'div[class*="gsi"]',
+                            'div[id*="one-tap"]',
+                            'div[id*="onetap"]',
+                            '[data-google-oauth-client]',
+                            '[aria-label*="Google"]',
+                        ];
+                        selectors.forEach(sel => {
+                            try { document.querySelectorAll(sel).forEach(el => el.remove()); }
+                            catch(e) {}
+                        });
+                    }""")
                 except Exception:
-                    raise RuntimeError(
-                        "Editor not found after 15s — page may be a Cloudflare challenge "
-                        "or Perplexity has changed its DOM structure."
-                    )
+                    pass
 
-                await editor.click(force=True)
-                await asyncio.sleep(0.3)
-                await page.keyboard.insert_text(self.config['tiny_prompt'])
-                await asyncio.sleep(0.5)
-                await page.keyboard.press("Enter")
-                await asyncio.sleep(3)
-                print(f"[FACTORY:{self.engine.upper()}] Tiny prompt accepted. Session trusted.")
+                # ── Profile Warmed ───────────────────────────────────────────────
+                # The Cloudflare challenge is passed and homepage is loaded.
+                # We linger for 5 seconds to ensure cf_clearance and telemetry cookies
+                # are fully written to the persistent profile.
+                # (We no longer need to type a tiny prompt since the Worker uses Direct URL search)
+                print(f"[FACTORY:{self.engine.upper()}] Cloudflare passed. Lingering to save cookies...")
+                await asyncio.sleep(5)
+                print(f"[FACTORY:{self.engine.upper()}] Profile successfully warmed.")
 
 
         except Exception as e:

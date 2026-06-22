@@ -14,13 +14,14 @@ ENGINE_PROFILES = {
     "perplexity": {
         "url": "https://www.perplexity.ai",
         "search_url_template": "https://www.perplexity.ai/search?q={query}",
-        "input_selector": '[data-lexical-editor="true"]',
-        "response_selector": "div.prose, div[class*='prose'], div.break-words",
-        "send_button_selector": 'button[aria-label*="Submit"], button[type="submit"]',
-        "login_wall_indicators": ['Please verify you are a human', 'cf-error', 'unusual traffic', 'Access denied'],
+        # Zero-knowledge / generic selectors
+        "input_selector": 'textarea, [contenteditable="true"], input[type="text"]',
+        "response_selector": "main, article, div.prose, [data-testid='answer-text']",
+        "send_button_selector": 'button[type="submit"], button:has(svg)',
+        "login_wall_indicators": ['just a moment', 'cf-error', 'challenges.cloudflare.com'],
         "tiny_prompt": "hi",
         "injection_method": "hardware",
-        "stream_indicators": ["rest/thread", "rest/ask", "query", "graphql", "socket.io"]
+        "stream_indicators": ["graphql", "socket.io", "query"]
     },
     "gemini": {
         "url": "https://gemini.google.com/app",

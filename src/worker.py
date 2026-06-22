@@ -94,22 +94,38 @@ class ExtractionWorker:
             # STRATEGY B: Homepage navigation + typing
             search_template = self.config.get("search_url_template")
 
+            async def _wait_for_cloudflare_and_react():
+                # 1. Cloudflare JS Challenge Handler
+                page_title = await page.title()
+                if any(ind in page_title.lower() for ind in ["just a moment", "cf-error", "attention required", "403"]):
+                    print(f"[WORKER:{self.engine.upper()}] Cloudflare challenge detected — waiting for auto-resolve...")
+                    for _ in range(15):
+                        await asyncio.sleep(1)
+                        page_title = await page.title()
+                        if not any(ind in page_title.lower() for ind in ["just a moment", "cf-error", "attention required", "403"]):
+                            print(f"[WORKER:{self.engine.upper()}] Cloudflare challenge resolved!")
+                            break
+                    else:
+                        raise Exception("Cloudflare block persistent after 15s — proxy burned.")
+                
+                # 2. React Hydration Wait
+                try:
+                    await page.wait_for_selector("#root > *", timeout=15000)
+                except Exception:
+                    print(f"[WORKER:{self.engine.upper()}] Blank page — reloading ...")
+                    await page.reload(wait_until="domcontentloaded", timeout=60000)
+                    try:
+                        await page.wait_for_selector("#root > *", timeout=15000)
+                    except Exception:
+                        raise Exception("Page blank after reload — proxy or network issue.")
+
             if search_template:
                 # ── Strategy A: Direct URL Search ──────────────────────────────
                 nav_url = search_template.format(query=quote_plus(prompt))
                 print(f"[WORKER:{self.engine.upper()}] Direct URL search: {nav_url[:80]}...")
                 await page.goto(nav_url, wait_until="domcontentloaded", timeout=60000)
 
-                # Wait for React SPA to hydrate
-                try:
-                    await page.wait_for_selector("#root > *", timeout=30000)
-                except Exception:
-                    print(f"[WORKER:{self.engine.upper()}] Blank page — reloading ...")
-                    await page.reload(wait_until="domcontentloaded", timeout=60000)
-                    try:
-                        await page.wait_for_selector("#root > *", timeout=20000)
-                    except Exception:
-                        raise Exception("Page blank after reload — proxy or network issue.")
+                await _wait_for_cloudflare_and_react()
 
                 # Soft modal dismissal (mostly for cookie banners, login won't block generation)
                 await self._soft_dismiss_modals(page)
@@ -121,15 +137,7 @@ class ExtractionWorker:
                 print(f"[WORKER:{self.engine.upper()}] Navigating to {nav_url} ...")
                 await page.goto(nav_url, wait_until="domcontentloaded", timeout=60000)
 
-                try:
-                    await page.wait_for_selector("#root > *", timeout=30000)
-                except Exception:
-                    print(f"[WORKER:{self.engine.upper()}] Blank page — reloading ...")
-                    await page.reload(wait_until="domcontentloaded", timeout=60000)
-                    try:
-                        await page.wait_for_selector("#root > *", timeout=20000)
-                    except Exception:
-                        raise Exception("Page blank after reload — proxy or network issue.")
+                await _wait_for_cloudflare_and_react()
 
                 await self._soft_dismiss_modals(page)
 
