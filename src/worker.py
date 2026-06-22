@@ -31,8 +31,9 @@ from src.engine_profiles import ENGINE_PROFILES
 #   This is the definitive signal that the AI has finished streaming.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Set to True temporarily to watch the browser window and debug visually.
-DEBUG_HEADLESS = False
+# Set via env var: DEBUG_HEADLESS=1 python perplexity_agent.py
+import os as _os
+DEBUG_HEADLESS = _os.getenv("DEBUG_HEADLESS", "0") != "1"
 
 
 class ExtractionWorker:
@@ -68,7 +69,8 @@ class ExtractionWorker:
             user_data_dir=self.profile_path,
             proxy=self._parse_proxy(),
             geoip=True,
-            locale="en-US",
+            # NOTE: do NOT set locale= when geoip=True — geoip sets locale
+            # automatically from the proxy IP. Explicit locale conflicts.
         ) as browser:
             page = browser.pages[0] if browser.pages else await browser.new_page()
             page.on("pageerror", lambda _: None)
@@ -87,51 +89,67 @@ class ExtractionWorker:
 
             await page.route("**/*", safe_route)
 
-            # ── STEP 1: Navigate ──────────────────────────────────────────────
-            # Use the homepage — the profile has cf_clearance cookies so
-            # Cloudflare will pass us through cleanly.
-            nav_url = self.config["url"]
-            print(f"[WORKER:{self.engine.upper()}] Navigating to {nav_url} ...")
-            await page.goto(nav_url, wait_until="domcontentloaded", timeout=60000)
+            # ── Navigation & Prompt Injection ─────────────────────────────────
+            # STRATEGY A: Direct URL search if engine supports it
+            # STRATEGY B: Homepage navigation + typing
+            search_template = self.config.get("search_url_template")
 
-            # Wait for React SPA to hydrate (#root is empty on initial HTML)
-            try:
-                await page.wait_for_selector("#root > *", timeout=30000)
-            except Exception:
-                # If still blank, try one reload
-                print(f"[WORKER:{self.engine.upper()}] Blank page — reloading ...")
-                await page.reload(wait_until="domcontentloaded", timeout=60000)
+            if search_template:
+                # ── Strategy A: Direct URL Search ──────────────────────────────
+                nav_url = search_template.format(query=quote_plus(prompt))
+                print(f"[WORKER:{self.engine.upper()}] Direct URL search: {nav_url[:80]}...")
+                await page.goto(nav_url, wait_until="domcontentloaded", timeout=60000)
+
+                # Wait for React SPA to hydrate
                 try:
-                    await page.wait_for_selector("#root > *", timeout=20000)
+                    await page.wait_for_selector("#root > *", timeout=30000)
                 except Exception:
-                    raise Exception("Page blank after reload — proxy or network issue.")
+                    print(f"[WORKER:{self.engine.upper()}] Blank page — reloading ...")
+                    await page.reload(wait_until="domcontentloaded", timeout=60000)
+                    try:
+                        await page.wait_for_selector("#root > *", timeout=20000)
+                    except Exception:
+                        raise Exception("Page blank after reload — proxy or network issue.")
 
-            # ── STEP 2: Soft modal dismissal (ONE attempt, non-blocking) ──────
-            # The login modal is cosmetic. We try to dismiss it but we don't
-            # wait long and we don't fail if it doesn't disappear.
-            # Priority order: cookie consent first, then login modal X button.
-            await self._soft_dismiss_modals(page)
+                # Soft modal dismissal (mostly for cookie banners, login won't block generation)
+                await self._soft_dismiss_modals(page)
+                print(f"[WORKER:{self.engine.upper()}] Prompt dispatched via URL — watching network ...")
 
-            # ── STEP 3: Inject prompt via Lexical editor ──────────────────────
-            # Use force=True on click so pointer-events overlays don't block us.
-            print(f"[WORKER:{self.engine.upper()}] Injecting prompt ...")
-            editor = page.locator(self.config["input_selector"]).first
-            try:
-                await editor.wait_for(state="attached", timeout=30000)
-            except Exception:
-                await self._save_debug_screenshot(page, task_id, "no_editor")
-                raise Exception("Editor not found — likely a hard login wall or proxy block.")
+            else:
+                # ── Strategy B: Homepage Navigation & Typing ───────────────────
+                nav_url = self.config["url"]
+                print(f"[WORKER:{self.engine.upper()}] Navigating to {nav_url} ...")
+                await page.goto(nav_url, wait_until="domcontentloaded", timeout=60000)
 
-            await editor.click(force=True)
-            await asyncio.sleep(0.3)
+                try:
+                    await page.wait_for_selector("#root > *", timeout=30000)
+                except Exception:
+                    print(f"[WORKER:{self.engine.upper()}] Blank page — reloading ...")
+                    await page.reload(wait_until="domcontentloaded", timeout=60000)
+                    try:
+                        await page.wait_for_selector("#root > *", timeout=20000)
+                    except Exception:
+                        raise Exception("Page blank after reload — proxy or network issue.")
 
-            # After clicking the editor, modal may re-appear. Soft-dismiss again.
-            await self._soft_dismiss_modals(page)
+                await self._soft_dismiss_modals(page)
 
-            await page.keyboard.insert_text(prompt)
-            await asyncio.sleep(0.3)
-            await page.keyboard.press("Enter")
-            print(f"[WORKER:{self.engine.upper()}] Prompt sent — watching network ...")
+                print(f"[WORKER:{self.engine.upper()}] Injecting prompt ...")
+                editor = page.locator(self.config["input_selector"]).first
+                try:
+                    await editor.wait_for(state="attached", timeout=30000)
+                except Exception:
+                    await self._save_debug_screenshot(page, task_id, "no_editor")
+                    raise Exception("Editor not found — likely a hard login wall or proxy block.")
+
+                await editor.click(force=True)
+                await asyncio.sleep(0.3)
+                await self._soft_dismiss_modals(page)
+
+                await page.keyboard.insert_text(prompt)
+                await asyncio.sleep(0.3)
+                await page.keyboard.press("Enter")
+                print(f"[WORKER:{self.engine.upper()}] Prompt sent — watching network ...")
+
 
             # ── STEP 4: Smart Silence Timer ───────────────────────────────────
             # The ONLY reliable signal that the AI is done streaming is
@@ -186,42 +204,68 @@ class ExtractionWorker:
 
     async def _soft_dismiss_modals(self, page):
         """
-        One non-blocking attempt to dismiss cookie consent and login modals.
-        Never raises — if modal can't be dismissed, we proceed anyway.
-        The AI generates underneath the modal, so extraction still works.
+        Locale-independent modal dismissal.
+        Uses structural selectors (IDs, roles) — NOT button text — because
+        geoip=True causes the browser to render in the proxy's local language.
+        Never raises — the AI generates underneath modals so extraction works either way.
         """
         try:
-            # 1. Cookie consent (appears first, must be clicked before anything)
-            consent_btn = page.locator(
-                'button:has-text("Got it"), button:has-text("Allow all"), '
-                'button:has-text("Only necessary")'
-            ).first
-            if await consent_btn.is_visible():
-                await consent_btn.click()
+            # 1. Cookie consent — Perplexity uses id="cookie-consent"
+            #    The LAST button is always the "accept" one (Got it / 同意する / etc.)
+            #    regardless of language.
+            consent = page.locator('#cookie-consent button').last
+            if await consent.is_visible():
+                await consent.click()
                 await asyncio.sleep(0.5)
+            else:
+                # Fallback: any bottom-right cookie banner accept button
+                consent2 = page.locator(
+                    '[class*="cookie"] button:last-child, '
+                    '[id*="cookie"] button:last-child, '
+                    '[class*="consent"] button:last-child'
+                ).last
+                if await consent2.is_visible():
+                    await consent2.click()
+                    await asyncio.sleep(0.5)
         except Exception:
             pass
 
         try:
-            # 2. Login modal X close button
-            #    The modal close button has no aria-label on Perplexity,
-            #    so we target the last button inside the dialog role element.
-            close = page.locator('div[role="dialog"] button').last
+            # 2. Login modal — target the close (×) button which is always the
+            #    FIRST button inside the dialog (top-right corner X).
+            close = page.locator('div[role="dialog"] button').first
             if await close.is_visible():
                 await close.click()
                 await asyncio.sleep(0.3)
         except Exception:
             pass
 
-        # 3. Remove Google One Tap / credential iframes from DOM
+        # 3. Kill Google One Tap in ALL its rendering forms:
+        #    - iframe (old): src=accounts.google.com
+        #    - div (new GSI): id="credential_picker_container", class="gsi*", etc.
+        #    - The floating card seen in the Arabic screenshot
         try:
             await page.evaluate("""() => {
-                document.querySelectorAll(
-                    'iframe[src*="accounts.google"], iframe[src*="smartlock"], #credential_picker_container'
-                ).forEach(el => el.remove());
+                const selectors = [
+                    'iframe[src*="accounts.google"]',
+                    'iframe[src*="smartlock"]',
+                    '#credential_picker_container',
+                    '#google-one-tap-container',
+                    'div[id*="gsi"]',
+                    'div[class*="gsi"]',
+                    'div[id*="one-tap"]',
+                    'div[id*="onetap"]',
+                    '[data-google-oauth-client]',
+                    '[aria-label*="Google"]',  // catches the Arabic Google One Tap card
+                ];
+                selectors.forEach(sel => {
+                    try { document.querySelectorAll(sel).forEach(el => el.remove()); }
+                    catch(e) {}
+                });
             }""")
         except Exception:
             pass
+
 
     async def _extract_response(self, page, task_id: str) -> str:
         """

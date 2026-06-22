@@ -69,9 +69,22 @@ async def main():
     except asyncio.CancelledError:
         pass
     finally:
-        factory_task.cancel()
-        await db_manager.close()
-        await r.aclose()
+        # Cancel factory daemon gracefully
+        if not factory_task.done():
+            factory_task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(factory_task), timeout=3)
+            except Exception:
+                pass
+        # Close DB and Redis connections
+        try:
+            await db_manager.close()
+        except Exception:
+            pass
+        try:
+            await r.aclose()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     # Windows + Playwright requires ProactorEventLoop for subprocess support.

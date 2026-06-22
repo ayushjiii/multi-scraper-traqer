@@ -67,7 +67,10 @@ class ProfileFactory:
             async with AsyncCamoufox(
                 headless=True, persistent_context=True,
                 user_data_dir=profile_path, proxy=camoufox_proxy,
-                geoip=True, locale="en-US"
+                geoip=True
+                # NOTE: do NOT set locale= when geoip=True — geoip already
+                # sets the locale to match the proxy country. Explicit locale
+                # would conflict and cause inconsistent fingerprints.
             ) as browser:
                 page = browser.pages[0] if browser.pages else await browser.new_page()
                 page.on("pageerror", lambda exc: None)
@@ -88,93 +91,111 @@ class ProfileFactory:
 
                 print(f"[FACTORY:{self.engine.upper()}] Navigating to {self.config['url']}...")
                 await page.goto(self.config['url'], wait_until="domcontentloaded", timeout=60000)
-                
-                # Wait for React to hydrate — the root div starts empty, so we wait
-                # until SOMETHING inside #root is actually rendered.
+
+                # ── Wait for React to hydrate ─────────────────────────────────
                 print(f"[FACTORY:{self.engine.upper()}] Waiting for React hydration...")
                 try:
                     await page.wait_for_selector('#root > *', timeout=30000)
                 except Exception:
-                    pass  # Continue anyway
-                
-                # --- AUTOMATED TURNSTILE SOLVER ---
-                print(f"[FACTORY:{self.engine.upper()}] Scanning for verification frames...")
-                # Wait for a frame that may contain the turnstile challenge
+                    pass
+
+                # ── Cloudflare JS Challenge Handler ───────────────────────────
+                # "Just a moment..." = Cloudflare running a JS integrity check.
+                # Camoufox (stealth browser) passes this ~80% of the time automatically.
+                # We wait up to 15s for the challenge to resolve before giving up.
+                # Only ban the proxy if the challenge page PERSISTS after waiting.
+                page_title = await page.title()
+                if any(ind in page_title.lower() for ind in ["just a moment", "cf-error",
+                                                              "attention required", "403"]):
+                    print(f"[FACTORY:{self.engine.upper()}] Cloudflare challenge detected — waiting for auto-resolve...")
+                    for _ in range(15):  # wait up to 15 seconds
+                        await asyncio.sleep(1)
+                        page_title = await page.title()
+                        page_url   = page.url
+                        if not any(ind in page_title.lower() for ind in ["just a moment", "cf-error",
+                                                                          "attention required", "403"]):
+                            print(f"[FACTORY:{self.engine.upper()}] Cloudflare challenge resolved!")
+                            break
+                    else:
+                        # Still blocked after 15s — this proxy is genuinely banned
+                        raise RuntimeError(
+                            f"Cloudflare block detected (title='{page_title}', url='{page.url}'). "
+                            "Marking proxy as banned."
+                        )
+
+                # Hard block — challenge URL itself (redirect to Cloudflare)
+                if "challenges.cloudflare.com" in page.url.lower():
+                    raise RuntimeError(
+                        f"Cloudflare block detected (url='{page.url}'). Marking proxy as banned."
+                    )
+
+                # ── Turnstile solver (runs only if a challenge frame appears) ─
                 try:
-                    # Wait up to 10 seconds for any new frame to be attached
-                    frame = await page.wait_for_event("frameattached", timeout=10000)
+                    frame = await page.wait_for_event("frameattached", timeout=5000)
                     if "challenge" in frame.url or "turnstile" in frame.url:
-                        print(f"[FACTORY:{self.engine.upper()}] Turnstile detected! Simulating human clearance interaction...")
+                        print(f"[FACTORY:{self.engine.upper()}] Turnstile detected — solving...")
                         checkbox = frame.locator('input[type="checkbox"], .mark, #challenge-stage').first
                         if await checkbox.count() > 0 and await checkbox.is_visible():
                             box = await checkbox.bounding_box()
                             if box:
-                                target_x = box["x"] + (box["width"] / 2)
-                                target_y = box["y"] + (box["height"] / 2)
-                                await page.mouse.move(target_x, target_y, steps=15)
+                                cx = box["x"] + box["width"] / 2
+                                cy = box["y"] + box["height"] / 2
+                                await page.mouse.move(cx, cy, steps=15)
                                 await asyncio.sleep(0.2)
-                                await page.mouse.click(target_x, target_y)
-                                print(f"[FACTORY:{self.engine.upper()}] Verification coordinates clicked.")
+                                await page.mouse.click(cx, cy)
                                 await asyncio.sleep(2)
-                except Exception as e:
-                    # No turnstile present or timeout – continue silently
-                    print(f"[FACTORY:{self.engine.upper()}] Turnstile not present or failed to solve: {e}")
-
-                # --- STEP 1: Cookie Consent ---
-                # Perplexity shows a cookie banner (id="cookie-consent") on first load.
-                # We must click "Got it" before anything else is interactable.
-                print(f"[FACTORY:{self.engine.upper()}] Waiting for cookie consent...")
-                try:
-                    got_it = page.locator('#cookie-consent button:has-text("Got it"), button:has-text("Got it"), button:has-text("Allow all"), button:has-text("Only necessary")').first
-                    await got_it.wait_for(state="visible", timeout=10000)
-                    await got_it.click()
-                    print(f"[FACTORY:{self.engine.upper()}] Cookie consent dismissed.")
-                    await asyncio.sleep(1)
                 except Exception:
-                    print(f"[FACTORY:{self.engine.upper()}] No cookie consent found, continuing...")
+                    pass  # No challenge frame — good, continue normally
 
-                # --- STEP 2: Dismiss Login Modal ---
-                # Perplexity shows a "Log in or sign up for free" modal.
-                # The close button is an SVG X button with no aria-label — we target it by
-                # looking for the dialog close button or clicking outside it.
-                print(f"[FACTORY:{self.engine.upper()}] Dismissing login modal...")
+                # ── Cookie consent (locale-independent) ──────────────────────
+                # Use #cookie-consent ID + last button — works in any language.
                 try:
-                    # The modal close button (×) appears as a button inside the dialog overlay
-                    close_btn = page.locator('button[aria-label="Close"], button.absolute svg, div[role="dialog"] button').last
-                    await close_btn.wait_for(state="visible", timeout=8000)
-                    await close_btn.click()
-                    await asyncio.sleep(0.5)
+                    consent = page.locator('#cookie-consent button').last
+                    if await consent.is_visible():
+                        await consent.click()
+                        print(f"[FACTORY:{self.engine.upper()}] Cookie consent dismissed.")
+                        await asyncio.sleep(0.8)
                 except Exception:
                     pass
-                
-                # Click outside any modal (top-left corner of the main content area)
-                await page.mouse.click(300, 300)
-                await asyncio.sleep(0.5)
-                # Escape is a secondary fallback for stubborn overlays
-                await page.keyboard.press("Escape")
-                await asyncio.sleep(0.5)
 
-                # --- STEP 3: Kill Google One Tap & credential iframes ---
-                await page.evaluate('''() => {
-                    // Remove Google credential/smartlock iframes
+                # ── Login modal (soft dismiss) ─────────────────────────────────
+                try:
+                    close_btn = page.locator('div[role="dialog"] button').last
+                    if await close_btn.is_visible():
+                        await close_btn.click()
+                        await asyncio.sleep(0.3)
+                except Exception:
+                    pass
+
+                # Remove Google One Tap iframes
+                await page.evaluate("""() => {
                     document.querySelectorAll(
                         'iframe[src*="accounts.google"], iframe[src*="smartlock"], #credential_picker_container'
                     ).forEach(el => el.remove());
-                }''')
+                }""")
 
-                # --- STEP 4: Inject tiny prompt via the Lexical editor ---
-                # Perplexity uses a Lexical rich-text editor (data-lexical-editor="true"),
-                # NOT a plain <textarea>. We must target it precisely.
+                # ── Find and use the Lexical editor ──────────────────────────
+                # Use state="attached" (in DOM) not "visible" — the editor IS in
+                # the DOM even when the login modal sits on top of it.
+                # Then use click(force=True) to bypass pointer-events from the overlay.
                 print(f"[FACTORY:{self.engine.upper()}] Waiting for search editor...")
-                editor = page.locator('[data-lexical-editor="true"], textarea[aria-placeholder*="Ask"]').first
-                await editor.wait_for(state="visible", timeout=45000)
-                await editor.click()
+                editor = page.locator('[data-lexical-editor="true"]').first
+                try:
+                    await editor.wait_for(state="attached", timeout=15000)
+                except Exception:
+                    raise RuntimeError(
+                        "Editor not found after 15s — page may be a Cloudflare challenge "
+                        "or Perplexity has changed its DOM structure."
+                    )
+
+                await editor.click(force=True)
                 await asyncio.sleep(0.3)
                 await page.keyboard.insert_text(self.config['tiny_prompt'])
                 await asyncio.sleep(0.5)
                 await page.keyboard.press("Enter")
                 await asyncio.sleep(3)
                 print(f"[FACTORY:{self.engine.upper()}] Tiny prompt accepted. Session trusted.")
+
 
         except Exception as e:
             error_msg = str(e)
@@ -183,7 +204,11 @@ class ProfileFactory:
             try: await self.db.execute("DELETE FROM browser_profiles WHERE id = $1", profile_id)
             except Exception: pass
 
-            if any(sig in error_msg for sig in ["NS_ERROR_PROXY", "Timeout", "closed", "Connection refused"]):
+            proxy_ban_signals = [
+                "NS_ERROR_PROXY", "Connection refused", "Failed to connect",
+                "Cloudflare block", "ERR_PROXY", "ECONNREFUSED"
+            ]
+            if any(sig in error_msg for sig in proxy_ban_signals):
                 try:
                     await self.db.execute(f"UPDATE proxies SET {banned_col} = TRUE WHERE connection_string = $1", proxy_str)
                     print(f"[FACTORY:{self.engine.upper()}] Proxy flagged as banned for this engine.")

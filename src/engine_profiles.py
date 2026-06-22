@@ -13,6 +13,7 @@ ENGINE_PROFILES = {
     },
     "perplexity": {
         "url": "https://www.perplexity.ai",
+        "search_url_template": "https://www.perplexity.ai/search?q={query}",
         "input_selector": '[data-lexical-editor="true"]',
         "response_selector": "div.prose, div[class*='prose'], div.break-words",
         "send_button_selector": 'button[aria-label*="Submit"], button[type="submit"]',
