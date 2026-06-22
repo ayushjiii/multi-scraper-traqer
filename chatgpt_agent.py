@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import json
 import redis.asyncio as redis
 from src.config import Config
@@ -85,7 +86,24 @@ async def main():
         await r.aclose()
 
 if __name__ == "__main__":
+    loop = asyncio.ProactorEventLoop()
+    asyncio.set_event_loop(loop)
+
+    def _silence_cleanup_noise(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, (RuntimeError, ValueError)) and any(
+            phrase in str(exc) for phrase in [
+                "Event loop is closed", "I/O operation on closed pipe"
+            ]
+        ):
+            return
+        loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_silence_cleanup_noise)
     try:
-        asyncio.run(main())
+        loop.run_until_complete(main())
     except KeyboardInterrupt:
         print(f"\n[{ENGINE.upper()}] Terminated by user.")
+    finally:
+        loop.close()
+

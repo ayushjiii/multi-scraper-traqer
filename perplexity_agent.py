@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import json
 import redis.asyncio as redis
 from src.config import Config
@@ -73,5 +74,26 @@ async def main():
         await r.aclose()
 
 if __name__ == "__main__":
-    try: asyncio.run(main())
-    except KeyboardInterrupt: print(f"\n[{ENGINE.upper()}] Terminated.")
+    # Windows + Playwright requires ProactorEventLoop for subprocess support.
+    # We add a custom exception handler to silence cleanup noise (closed pipes,
+    # closed event loop warnings) that appear when the browser process exits.
+    loop = asyncio.ProactorEventLoop()
+    asyncio.set_event_loop(loop)
+
+    def _silence_cleanup_noise(loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, (RuntimeError, ValueError)) and any(
+            phrase in str(exc) for phrase in [
+                "Event loop is closed", "I/O operation on closed pipe"
+            ]
+        ):
+            return  # Silently discard — these are harmless teardown artifacts
+        loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_silence_cleanup_noise)
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print(f"\n[{ENGINE.upper()}] Terminated.")
+    finally:
+        loop.close()

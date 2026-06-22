@@ -89,6 +89,14 @@ class ProfileFactory:
                 print(f"[FACTORY:{self.engine.upper()}] Navigating to {self.config['url']}...")
                 await page.goto(self.config['url'], wait_until="domcontentloaded", timeout=60000)
                 
+                # Wait for React to hydrate — the root div starts empty, so we wait
+                # until SOMETHING inside #root is actually rendered.
+                print(f"[FACTORY:{self.engine.upper()}] Waiting for React hydration...")
+                try:
+                    await page.wait_for_selector('#root > *', timeout=30000)
+                except Exception:
+                    pass  # Continue anyway
+                
                 # --- AUTOMATED TURNSTILE SOLVER ---
                 print(f"[FACTORY:{self.engine.upper()}] Scanning for verification frames...")
                 # Wait for a frame that may contain the turnstile challenge
@@ -112,36 +120,58 @@ class ProfileFactory:
                     # No turnstile present or timeout – continue silently
                     print(f"[FACTORY:{self.engine.upper()}] Turnstile not present or failed to solve: {e}")
 
-                # --- SAFE DOM NUKE ---
+                # --- STEP 1: Cookie Consent ---
+                # Perplexity shows a cookie banner (id="cookie-consent") on first load.
+                # We must click "Got it" before anything else is interactable.
+                print(f"[FACTORY:{self.engine.upper()}] Waiting for cookie consent...")
+                try:
+                    got_it = page.locator('#cookie-consent button:has-text("Got it"), button:has-text("Got it"), button:has-text("Allow all"), button:has-text("Only necessary")').first
+                    await got_it.wait_for(state="visible", timeout=10000)
+                    await got_it.click()
+                    print(f"[FACTORY:{self.engine.upper()}] Cookie consent dismissed.")
+                    await asyncio.sleep(1)
+                except Exception:
+                    print(f"[FACTORY:{self.engine.upper()}] No cookie consent found, continuing...")
+
+                # --- STEP 2: Dismiss Login Modal ---
+                # Perplexity shows a "Log in or sign up for free" modal.
+                # The close button is an SVG X button with no aria-label — we target it by
+                # looking for the dialog close button or clicking outside it.
+                print(f"[FACTORY:{self.engine.upper()}] Dismissing login modal...")
+                try:
+                    # The modal close button (×) appears as a button inside the dialog overlay
+                    close_btn = page.locator('button[aria-label="Close"], button.absolute svg, div[role="dialog"] button').last
+                    await close_btn.wait_for(state="visible", timeout=8000)
+                    await close_btn.click()
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+                
+                # Click outside any modal (top-left corner of the main content area)
+                await page.mouse.click(300, 300)
+                await asyncio.sleep(0.5)
+                # Escape is a secondary fallback for stubborn overlays
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(0.5)
+
+                # --- STEP 3: Kill Google One Tap & credential iframes ---
                 await page.evaluate('''() => {
-                    const style = document.createElement('style');
-                    style.innerHTML = `
-                        iframe[src*="smartlock"], iframe[src*="account"], iframe[title*="Google"], 
-                        #credential_picker_container {
-                            display: none !important; opacity: 0 !important; pointer-events: none !important;
-                            z-index: -9999 !important; visibility: hidden !important;
-                        }
-                    `;
-                    document.head.appendChild(style);
-
-                    // Remove unwanted iframes and credential picker once after page load
-                    const selectors = [
-                        'iframe[src*="smartlock"]',
-                        'iframe[src*="account"]',
-                        'iframe[title*="Google"]',
-                        '#credential_picker_container'
-                    ];
-                    selectors.forEach(sel => {
-                        document.querySelectorAll(sel).forEach(el => el.remove());
-                    });
+                    // Remove Google credential/smartlock iframes
+                    document.querySelectorAll(
+                        'iframe[src*="accounts.google"], iframe[src*="smartlock"], #credential_picker_container'
+                    ).forEach(el => el.remove());
                 }''')
-                await asyncio.sleep(2)
 
-                input_element = page.locator(self.config['input_selector']).first
-                await input_element.wait_for(state="attached", timeout=45000)
-                await input_element.focus()
+                # --- STEP 4: Inject tiny prompt via the Lexical editor ---
+                # Perplexity uses a Lexical rich-text editor (data-lexical-editor="true"),
+                # NOT a plain <textarea>. We must target it precisely.
+                print(f"[FACTORY:{self.engine.upper()}] Waiting for search editor...")
+                editor = page.locator('[data-lexical-editor="true"], textarea[aria-placeholder*="Ask"]').first
+                await editor.wait_for(state="visible", timeout=45000)
+                await editor.click()
+                await asyncio.sleep(0.3)
                 await page.keyboard.insert_text(self.config['tiny_prompt'])
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.5)
                 await page.keyboard.press("Enter")
                 await asyncio.sleep(3)
                 print(f"[FACTORY:{self.engine.upper()}] Tiny prompt accepted. Session trusted.")

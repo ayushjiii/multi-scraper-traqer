@@ -13,9 +13,9 @@ ENGINE_PROFILES = {
     },
     "perplexity": {
         "url": "https://www.perplexity.ai",
-        "input_selector": 'textarea, [contenteditable="true"]',
-        "response_selector": "div.prose, div[class*='prose'], div.break-words, div[dir='auto'], .min-w-0 > div > div",
-        "send_button_selector": 'button[aria-label*="Submit"], button[type="submit"], button:has(svg)',
+        "input_selector": '[data-lexical-editor="true"]',
+        "response_selector": "div.prose, div[class*='prose'], div.break-words",
+        "send_button_selector": 'button[aria-label*="Submit"], button[type="submit"]',
         "login_wall_indicators": ['Please verify you are a human', 'cf-error', 'unusual traffic', 'Access denied'],
         "tiny_prompt": "hi",
         "injection_method": "hardware",
