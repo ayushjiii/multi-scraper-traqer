@@ -6,11 +6,11 @@ CREATE TABLE browser_profiles (
     profile_name VARCHAR(50) UNIQUE NOT NULL,
     engine_type VARCHAR(30) NOT NULL,
     storage_path TEXT NOT NULL,
-    proxy_string TEXT,
     status profile_status DEFAULT 'AVAILABLE',
     trust_score INT DEFAULT 0,
     last_used_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    proxy_string TEXT
 );
 
 CREATE TABLE proxies (
@@ -18,7 +18,10 @@ CREATE TABLE proxies (
     connection_string TEXT UNIQUE NOT NULL,
     status proxy_status DEFAULT 'ACTIVE',
     consecutive_failures INT DEFAULT 0,
-    last_tested_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    last_tested_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    chatgpt_banned BOOLEAN DEFAULT FALSE,
+    perplexity_banned BOOLEAN DEFAULT FALSE,
+    gemini_banned BOOLEAN DEFAULT FALSE
 );
 
 CREATE TABLE scrape_results (

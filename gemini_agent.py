@@ -23,10 +23,10 @@ class GeminiWorker:
         
         # Gemini-specific selectors
         self.url = "https://gemini.google.com/app"
-        self.input_selector = 'rich-textarea, div[contenteditable="true"], textarea:visible'
-        self.response_selector = 'message-content, .message-content, div.message-text'
-        self.send_btn_selector = 'button[aria-label*="Send"]'
-        self.stop_btn_selector = 'button[aria-label*="Stop"]'
+        self.input_selector = 'div.ql-editor[contenteditable="true"], div[contenteditable="true"].ql-editor, p[data-placeholder], div[contenteditable="true"]'
+        self.response_selector = 'model-response .markdown, model-response'
+        self.send_btn_selector = 'button[aria-label="Send message"], button[aria-label*="Send"]'
+        self.stop_btn_selector = 'button[aria-label="Stop response"], button[aria-label*="Stop"]'
 
     def _parse_proxy(self, proxy_str: str) -> dict:
         if not proxy_str: return None
@@ -44,7 +44,8 @@ class GeminiWorker:
             persistent_context=True,
             user_data_dir=self.profile_path,
             proxy=camoufox_proxy,
-            geoip=True
+            geoip=True,
+            locale="en-US",
         ) as browser:
             page = browser.pages[0] if browser.pages else await browser.new_page()
             
@@ -62,12 +63,14 @@ class GeminiWorker:
 
             await page.route("**/*", safe_route_handler)
 
-            print(f"[WORKER:GEMINI] Navigating to {self.url} ...")
-            await page.goto(self.url, wait_until="domcontentloaded", timeout=60000)
+            # Force a fresh conversation — avoids inheriting the warm-up "hi" thread
+            fresh_url = "https://gemini.google.com/app?hl=en"
+            print(f"[WORKER:GEMINI] Navigating to fresh chat ...")
+            await page.goto(fresh_url, wait_until="domcontentloaded", timeout=60000)
 
-            print(f"[WORKER:GEMINI] Waiting for React to hydrate...")
+            print(f"[WORKER:GEMINI] Waiting for Angular to hydrate...")
             try:
-                await page.wait_for_selector('#root > *', timeout=30000)
+                await page.wait_for_selector('div[contenteditable="true"], textarea, p[data-placeholder]', timeout=30000)
             except Exception:
                 raise Exception("Page blank after reload — proxy or network issue.")
 
@@ -112,20 +115,21 @@ class GeminiWorker:
             
             ai_message = page.locator(self.response_selector).last
             try:
-                await ai_message.wait_for(state="visible", timeout=25000)
+                await ai_message.wait_for(state="visible", timeout=35000)
             except Exception:
                 raise Exception("Generation element failed to anchor in window buffer. Threat signature suspected.")
 
             print(f"[WORKER:GEMINI] Stream processing confirmed active. Tracking output buffer limits...")
-            
+
             previous_length = 0
             stable_ticks = 0
-            
+
             for _ in range(90):  # 90 seconds maximum execution ceiling
                 await asyncio.sleep(1.0)
                 try:
                     is_still_generating = await page.locator(self.stop_btn_selector).count() > 0
-                    current_text = await ai_message.inner_text()
+                    # Re-resolve .last each tick so we always read the final response element
+                    current_text = await page.locator(self.response_selector).last.inner_text()
                     current_length = len(current_text)
 
                     if not is_still_generating and current_length == previous_length and current_length > 0:
@@ -139,43 +143,57 @@ class GeminiWorker:
                 except Exception:
                     pass
 
-            response_text = await ai_message.inner_text()
+            # Re-resolve once more for the final read
+            response_text = await page.locator(self.response_selector).last.inner_text()
             if not response_text:
                 raise Exception("Could not extract response text.")
 
-            if "sign up and repeat your request" in response_text.lower() or "please sign in" in response_text.lower():
+            if any(phrase in response_text.lower() for phrase in [
+                "sign in to continue", "sign in to use gemini", "you need to sign in",
+                "please sign in", "sign up and repeat"
+            ]):
                 raise Exception("Verification wall hit: Gemini requires login.")
 
-            # Attempt a native, human-like click to expand the sources panel
+            # Expand Gemini's sources panel — the chip/button labelled with a number e.g. "3 sources"
             try:
-                # Find buttons that contain "source", "view", or "more" that are related to expanding the sources UI
-                source_buttons = page.locator('button:has-text("Source"), button:has-text("View"), button:has-text("more")')
-                count = await source_buttons.count()
-                for i in range(count):
-                    btn = source_buttons.nth(i)
-                    if await btn.is_visible():
-                        text = await btn.inner_text()
-                        if "source" in text.lower() or "view" in text.lower():
-                            await btn.click() # Native playwright click, safe from bot detection
-                            await asyncio.sleep(1.5)
-                            break
+                sources_chip = page.locator('div[data-source-count], button:has-text("sources"), button:has-text("source")').first
+                if await sources_chip.count() > 0 and await sources_chip.is_visible():
+                    await sources_chip.click()
+                    await asyncio.sleep(2.0)
             except Exception:
                 pass
-                
-            # Extract source URLs (grabbing links that are typically in the sources header/sidebar)
+
+            # Extract source URLs — only genuine external sources, strip all Google-owned/internal domains
             sources = await page.evaluate("""() => {
-                const links = Array.from(document.querySelectorAll('a[href^="http"]'));
-                // Filter out standard gemini links, keep external sources
-                return links.map(a => a.href).filter(href => !href.includes('gemini.ai'));
+                const BLOCKED = [
+                    'gemini.google.com', 'gemini.google', 'accounts.google.com',
+                    'support.google.com', 'policies.google.com', 'one.google.com',
+                    'business.gemini.google', 'google.com/search', 'google.com/intl',
+                    'googleapis.com', 'gstatic.com', 'youtube.com', 'youtu.be',
+                    'google.com', 'goo.gl', 'g.co'
+                ];
+                return Array.from(document.querySelectorAll('a[href^="http"]'))
+                    .map(a => {
+                        try { return new URL(a.href).href; } catch { return null; }
+                    })
+                    .filter(href => {
+                        if (!href) return false;
+                        try {
+                            const host = new URL(href).hostname;
+                            return !BLOCKED.some(b => host === b || host.endsWith('.' + b));
+                        } catch { return false; }
+                    });
             }""")
             unique_sources = list(dict.fromkeys(sources))
 
             # Standardized layout normalization for clean snaps (Light Mode Enforcement)
+            # Gemini uses Angular Material — remove dark-theme from body/html and force light color-scheme
             await page.evaluate("""() => {
-                document.documentElement.classList.remove('dark', 'theme-dark');
-                document.documentElement.classList.add('light', 'theme-light');
+                document.documentElement.classList.remove('dark-theme', 'dark');
+                document.body.classList.remove('dark-theme', 'dark');
                 document.documentElement.setAttribute('data-theme', 'light');
                 document.documentElement.style.colorScheme = 'light';
+                document.body.style.colorScheme = 'light';
             }""")
             
             # CSS Expansion: Force the invisible layout scrollers to render exactly their full content
@@ -308,9 +326,9 @@ class GeminiFactory:
                 if "challenges.cloudflare.com" in page.url.lower():
                     raise RuntimeError(f"Cloudflare hard block detected. Marking proxy as banned.")
 
-                print(f"[FACTORY:GEMINI] Waiting for React hydration...")
+                print(f"[FACTORY:GEMINI] Waiting for Angular hydration...")
                 try:
-                    await page.wait_for_selector('#root > *', timeout=30000)
+                    await page.wait_for_selector('div[contenteditable="true"], textarea, p[data-placeholder]', timeout=30000)
                 except Exception:
                     pass
 
@@ -331,8 +349,8 @@ class GeminiFactory:
                 await asyncio.sleep(1)
 
                 # ── Tiny Prompt Injection ──────────────────────────────
-                print(f"[FACTORY:GEMINI] Submitting tiny prompt to initialize UI and cache WASM/WebSockets...")
-                input_selector = 'textarea, [contenteditable="true"]'
+                print(f"[FACTORY:GEMINI] Submitting tiny prompt to initialize UI and cache WebSockets...")
+                input_selector = 'div.ql-editor[contenteditable="true"], div[contenteditable="true"], p[data-placeholder]'
                 input_element = page.locator(input_selector).first
                 
                 try:

@@ -44,10 +44,11 @@ class PerplexityWorker:
             persistent_context=True,
             user_data_dir=self.profile_path,
             proxy=camoufox_proxy,
-            geoip=True
+            geoip=True,
+            locale="en-US",
         ) as browser:
             page = browser.pages[0] if browser.pages else await browser.new_page()
-            
+
             # Suppress unhandled React/Cloudflare errors
             page.on("pageerror", lambda exc: None)
 
@@ -65,9 +66,9 @@ class PerplexityWorker:
             print(f"[WORKER:PERPLEXITY] Navigating to {self.url} ...")
             await page.goto(self.url, wait_until="domcontentloaded", timeout=60000)
 
-            print(f"[WORKER:PERPLEXITY] Waiting for React to hydrate...")
+            print(f"[WORKER:PERPLEXITY] Waiting for page to hydrate...")
             try:
-                await page.wait_for_selector('#root > *', timeout=30000)
+                await page.wait_for_selector('textarea, [contenteditable="true"], input[type="text"]', timeout=30000)
             except Exception:
                 raise Exception("Page blank after reload — proxy or network issue.")
 
@@ -75,7 +76,7 @@ class PerplexityWorker:
             await page.evaluate('''() => {
                 const style = document.createElement('style');
                 style.innerHTML = `
-                    iframe[src*="smartlock"], iframe[src*="account"], iframe[title*="Google"], 
+                    iframe[src*="smartlock"], iframe[src*="account"], iframe[title*="Google"],
                     div[role="dialog"], .cdk-overlay-container, [class*="backdrop"], #credential_picker_container,
                     #cookie-consent {
                         display: none !important; opacity: 0 !important; pointer-events: none !important;
@@ -84,6 +85,17 @@ class PerplexityWorker:
                 `;
                 document.head.appendChild(style);
             }''')
+
+            # Dismiss Perplexity signup/cookie modals before interacting
+            try:
+                for dismiss_text in ["Decline optional", "Got it", "No thanks"]:
+                    btn = page.locator(f'button:has-text("{dismiss_text}")').first
+                    if await btn.count() > 0 and await btn.is_visible():
+                        await btn.click()
+                        await asyncio.sleep(0.5)
+                        break
+            except Exception:
+                pass
 
             print(f"[WORKER:PERPLEXITY] Injecting prompt ...")
             editor = page.locator(self.input_selector).first
@@ -110,22 +122,21 @@ class PerplexityWorker:
             # ── Dynamic Witness Loop ──
             await asyncio.sleep(3.0)
             
-            ai_message = page.locator(self.response_selector).last
             try:
-                await ai_message.wait_for(state="visible", timeout=25000)
+                await page.locator(self.response_selector).last.wait_for(state="visible", timeout=35000)
             except Exception:
                 raise Exception("Generation element failed to anchor in window buffer. Threat signature suspected.")
 
             print(f"[WORKER:PERPLEXITY] Stream processing confirmed active. Tracking output buffer limits...")
-            
+
             previous_length = 0
             stable_ticks = 0
-            
+
             for _ in range(90):  # 90 seconds maximum execution ceiling
                 await asyncio.sleep(1.0)
                 try:
                     is_still_generating = await page.locator(self.stop_btn_selector).count() > 0
-                    current_text = await ai_message.inner_text()
+                    current_text = await page.locator(self.response_selector).last.inner_text()
                     current_length = len(current_text)
 
                     if not is_still_generating and current_length == previous_length and current_length > 0:
@@ -139,35 +150,102 @@ class PerplexityWorker:
                 except Exception:
                     pass
 
-            response_text = await ai_message.inner_text()
+            response_text = await page.locator(self.response_selector).last.inner_text()
             if not response_text:
                 raise Exception("Could not extract response text.")
 
             if "sign up and repeat your request" in response_text.lower() or "please sign in" in response_text.lower():
                 raise Exception("Verification wall hit: Perplexity requires login.")
 
-            # Attempt a native, human-like click to expand the sources panel
+            # Dismiss the Perplexity signup modal if it appeared — it blocks all clicks
             try:
-                # Find buttons that contain "source", "view", or "more" that are related to expanding the sources UI
-                source_buttons = page.locator('button:has-text("Source"), button:has-text("View"), button:has-text("more")')
-                count = await source_buttons.count()
-                for i in range(count):
-                    btn = source_buttons.nth(i)
-                    if await btn.is_visible():
-                        text = await btn.inner_text()
-                        if "source" in text.lower() or "view" in text.lower():
-                            await btn.click() # Native playwright click, safe from bot detection
-                            await asyncio.sleep(1.5)
-                            break
+                dismiss = page.locator('button:has-text("Decline optional"), button[aria-label*="close" i], button[aria-label*="dismiss" i]').first
+                if await dismiss.count() > 0 and await dismiss.is_visible():
+                    await dismiss.click()
+                    await asyncio.sleep(0.8)
+                    print(f"[WORKER:PERPLEXITY] Signup modal dismissed.")
             except Exception:
                 pass
-                
-            # Extract source URLs (grabbing links that are typically in the sources header/sidebar)
-            sources = await page.evaluate("""() => {
-                const links = Array.from(document.querySelectorAll('a[href^="http"]'));
-                // Filter out standard perplexity links, keep external sources
-                return links.map(a => a.href).filter(href => !href.includes('perplexity.ai'));
-            }""")
+
+            # ── Source extraction is decoupled from the chip click ──
+            # DATA path: read links straight from the DOM. The "Links" tab content and the
+            # source cards are present in the DOM after generation whether or not the panel
+            # is visually open, so this does not depend on a click landing. Reliable + fast.
+            async def _extract_sources():
+                return await page.evaluate("""() => {
+                    const BLOCKED = ['perplexity.ai', 'perplexity.com'];
+                    const seen = new Set();
+                    const results = [];
+                    // The open sources panel is a Radix container with id "...content-citations"
+                    // (and a fixed right-side sidebar). Prefer links inside it; fall back to any.
+                    const allLinks = Array.from(document.querySelectorAll(
+                        '[id*="citations"] a[href^="http"], ' +
+                        '[id*="sources"] a[href^="http"], ' +
+                        '[class*="search-side-content"] a[href^="http"], ' +
+                        'a[href^="http"][data-cite], ' +
+                        '[class*="source"] a[href^="http"], ' +
+                        '[class*="citation"] a[href^="http"], ' +
+                        'a[href^="http"]'
+                    ));
+                    for (const a of allLinks) {
+                        let href;
+                        try { href = new URL(a.href).href; } catch { continue; }
+                        const host = new URL(href).hostname;
+                        if (BLOCKED.some(b => host === b || host.endsWith('.' + b))) continue;
+                        if (seen.has(href)) continue;
+                        seen.add(href);
+                        results.push(href);
+                    }
+                    return results;
+                }""")
+
+            # Open the "X sources" panel — REQUIRED: Perplexity does not render source links
+            # into the DOM until the panel is opened (confirmed: 0 links before, 10 after).
+            # CRITICAL: the chip is a TOGGLE — a second click closes it again. Click EXACTLY
+            # ONCE, then verify by checking the external-link count increased. Never re-click.
+            async def _count_links():
+                return await page.evaluate("""() => {
+                    const seen = new Set();
+                    for (const a of document.querySelectorAll('a[href^="http"]')) {
+                        try {
+                            const h = new URL(a.href).hostname;
+                            if (!h.includes('perplexity')) seen.add(a.href);
+                        } catch {}
+                    }
+                    return seen.size;
+                }""")
+
+            sources = []
+            try:
+                before = await _count_links()
+                # Single JS click — proven reliable; bypasses pointer-event interception.
+                clicked = await page.evaluate("""() => {
+                    for (const b of document.querySelectorAll('button')) {
+                        if ((b.innerText || '').toLowerCase().includes('source')) { b.click(); return true; }
+                    }
+                    return false;
+                }""")
+                if clicked:
+                    await asyncio.sleep(2.5)
+                    after = await _count_links()
+                    print(f"[WORKER:PERPLEXITY] Sources panel: {before} -> {after} links.")
+                    # If a second toggle accidentally closed it (count dropped back), click once more.
+                    if after <= before:
+                        await page.evaluate("""() => {
+                            for (const b of document.querySelectorAll('button')) {
+                                if ((b.innerText || '').toLowerCase().includes('source')) { b.click(); return; }
+                            }
+                        }""")
+                        await asyncio.sleep(2.0)
+                else:
+                    print(f"[WORKER:PERPLEXITY] Sources chip not found.")
+            except Exception:
+                pass
+
+            # Extract now that the panel is open — prefers the citations container's links.
+            sources = await _extract_sources()
+            print(f"[WORKER:PERPLEXITY] Sources extracted: {len(sources)}")
+
             unique_sources = list(dict.fromkeys(sources))
 
             # Standardized layout normalization for clean snaps (Light Mode Enforcement)
@@ -271,13 +349,14 @@ class PerplexityFactory:
                 persistent_context=True,
                 user_data_dir=profile_path,
                 proxy=camoufox_proxy,
-                geoip=True
+                geoip=True,
+                locale="en-US",
             ) as browser:
                 page = browser.pages[0] if browser.pages else await browser.new_page()
-                
+
                 # SUPPRESS DRIVER CRASHES: Swallow unhandled page errors
                 page.on("pageerror", lambda exc: None)
-                
+
                 async def safe_route_handler(route):
                     try:
                         if route.request.resource_type == "media":
@@ -308,9 +387,9 @@ class PerplexityFactory:
                 if "challenges.cloudflare.com" in page.url.lower():
                     raise RuntimeError(f"Cloudflare hard block detected. Marking proxy as banned.")
 
-                print(f"[FACTORY:PERPLEXITY] Waiting for React hydration...")
+                print(f"[FACTORY:PERPLEXITY] Waiting for page hydration...")
                 try:
-                    await page.wait_for_selector('#root > *', timeout=30000)
+                    await page.wait_for_selector('textarea, [contenteditable="true"], input[type="text"]', timeout=30000)
                 except Exception:
                     pass
 

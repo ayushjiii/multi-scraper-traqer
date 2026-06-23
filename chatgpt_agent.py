@@ -21,12 +21,12 @@ class ChatGPTWorker:
         self.screenshot_dir = os.path.join(os.getcwd(), "screenshots")
         os.makedirs(self.screenshot_dir, exist_ok=True)
         
-        # ChatGPT-specific selectors
-        self.url = "https://chatgpt.com"
-        self.input_selector = '#prompt-textarea, [contenteditable="true"]'
-        self.response_selector = "[data-message-author-role='assistant'], article"
-        self.send_btn_selector = 'button[data-testid="send-button"]'
-        self.stop_btn_selector = 'button[data-testid="stop-button"], button[aria-label*="Stop"]'
+        # ChatGPT-specific selectors (Next.js / ProseMirror, as of 2025)
+        self.url = "https://chatgpt.com/"
+        self.input_selector = 'div#prompt-textarea, div#prompt-textarea.ProseMirror'
+        self.response_selector = '[data-message-author-role="assistant"]'
+        self.send_btn_selector = 'button[data-testid="send-button"], button#composer-submit-button'
+        self.stop_btn_selector = 'button[aria-label*="Stop" i], button[data-testid="stop-button"]'
 
     def _parse_proxy(self, proxy_str: str) -> dict:
         if not proxy_str: return None
@@ -44,7 +44,8 @@ class ChatGPTWorker:
             persistent_context=True,
             user_data_dir=self.profile_path,
             proxy=camoufox_proxy,
-            geoip=True
+            geoip=True,
+            locale="en-US",
         ) as browser:
             page = browser.pages[0] if browser.pages else await browser.new_page()
             
@@ -62,12 +63,13 @@ class ChatGPTWorker:
 
             await page.route("**/*", safe_route_handler)
 
-            print(f"[WORKER:CHATGPT] Navigating to {self.url} ...")
+            # Fresh chat — avoids inheriting warm-up thread
+            print(f"[WORKER:CHATGPT] Navigating to fresh chat ...")
             await page.goto(self.url, wait_until="domcontentloaded", timeout=60000)
 
-            print(f"[WORKER:CHATGPT] Waiting for React to hydrate...")
+            print(f"[WORKER:CHATGPT] Waiting for Next.js to hydrate...")
             try:
-                await page.wait_for_selector('#root > *', timeout=30000)
+                await page.wait_for_selector('div#prompt-textarea, button[data-testid="send-button"]', timeout=30000)
             except Exception:
                 raise Exception("Page blank after reload — proxy or network issue.")
 
@@ -92,16 +94,34 @@ class ChatGPTWorker:
             except Exception:
                 raise Exception("Editor not found — likely a hard login wall or proxy block.")
 
-            await editor.focus()
-            
-            # Hardware typing handles complex Lexical/React states where native fill fails.
-            await page.keyboard.insert_text(prompt)
-            await asyncio.sleep(1.0)
-            
-            # Fire the active submit button
+            await editor.click()
+            await asyncio.sleep(0.3)
+            # Type character-by-character so React's synthetic event handler registers each keystroke
+            await page.keyboard.type(prompt, delay=30)
+            await asyncio.sleep(0.5)
+
+            # After typing, wait for the send button to become enabled (React may take a moment)
+            try:
+                await page.locator('button[data-testid="send-button"]:not([disabled])').wait_for(state="visible", timeout=5000)
+            except Exception:
+                pass
+            await asyncio.sleep(0.3)
+
+            # Dismiss any open tooltip/popover that can intercept pointer events on the send button
+            await page.evaluate("""() => {
+                document.querySelectorAll('[popover]').forEach(el => {
+                    try { el.hidePopover(); } catch {}
+                });
+            }""")
+            await asyncio.sleep(0.1)
+
+            # Fire the active submit button — force=True bypasses any remaining overlay intercept
             send_btn = page.locator(self.send_btn_selector).first
             if await send_btn.count() > 0 and await send_btn.is_visible():
-                await send_btn.click()
+                try:
+                    await send_btn.click(force=True)
+                except Exception:
+                    await page.keyboard.press("Enter")
             else:
                 await page.keyboard.press("Enter")
                 
@@ -110,22 +130,22 @@ class ChatGPTWorker:
             # ── Dynamic Witness Loop ──
             await asyncio.sleep(3.0)
             
-            ai_message = page.locator(self.response_selector).last
             try:
-                await ai_message.wait_for(state="visible", timeout=25000)
+                await page.locator(self.response_selector).last.wait_for(state="visible", timeout=35000)
             except Exception:
                 raise Exception("Generation element failed to anchor in window buffer. Threat signature suspected.")
 
             print(f"[WORKER:CHATGPT] Stream processing confirmed active. Tracking output buffer limits...")
-            
+
             previous_length = 0
             stable_ticks = 0
-            
+
             for _ in range(90):  # 90 seconds maximum execution ceiling
                 await asyncio.sleep(1.0)
                 try:
                     is_still_generating = await page.locator(self.stop_btn_selector).count() > 0
-                    current_text = await ai_message.inner_text()
+                    # Re-resolve .last each tick — prevents stale reference during streaming
+                    current_text = await page.locator(self.response_selector).last.inner_text()
                     current_length = len(current_text)
 
                     if not is_still_generating and current_length == previous_length and current_length > 0:
@@ -139,41 +159,50 @@ class ChatGPTWorker:
                 except Exception:
                     pass
 
-            response_text = await ai_message.inner_text()
+            # Re-resolve once more for the final read
+            response_text = await page.locator(self.response_selector).last.inner_text()
             if not response_text:
                 raise Exception("Could not extract response text.")
 
-            if "sign up and repeat your request" in response_text.lower() or "please sign in" in response_text.lower():
+            if any(phrase in response_text.lower() for phrase in [
+                "log in to continue", "sign in to continue", "please log in",
+                "you need to log in", "create a free account", "sign up to continue"
+            ]):
                 raise Exception("Verification wall hit: ChatGPT requires login.")
 
-            # Attempt a native, human-like click to expand the sources panel
+            # Expand ChatGPT's search sources panel if present (only appears when web search is on)
             try:
-                # Find buttons that contain "source", "view", or "more" that are related to expanding the sources UI
-                source_buttons = page.locator('button:has-text("Source"), button:has-text("View"), button:has-text("more")')
-                count = await source_buttons.count()
-                for i in range(count):
-                    btn = source_buttons.nth(i)
-                    if await btn.is_visible():
-                        text = await btn.inner_text()
-                        if "source" in text.lower() or "view" in text.lower():
-                            await btn.click() # Native playwright click, safe from bot detection
-                            await asyncio.sleep(1.5)
-                            break
+                sources_btn = page.locator('button:has-text("sources"), button:has-text("Sources"), [data-testid="search-button"]').first
+                if await sources_btn.count() > 0 and await sources_btn.is_visible():
+                    await sources_btn.click()
+                    await asyncio.sleep(2.0)
             except Exception:
                 pass
-                
-            # Extract source URLs (grabbing links that are typically in the sources header/sidebar)
+
+            # Extract source URLs — only genuine external sources, strip all OpenAI/ChatGPT domains
             sources = await page.evaluate("""() => {
-                const links = Array.from(document.querySelectorAll('a[href^="http"]'));
-                // Filter out standard chatgpt links, keep external sources
-                return links.map(a => a.href).filter(href => !href.includes('chatgpt.ai'));
+                const BLOCKED = [
+                    'chatgpt.com', 'openai.com', 'auth.openai.com',
+                    'help.openai.com', 'chat.com', 'oaistatic.com'
+                ];
+                return Array.from(document.querySelectorAll('a[href^="http"]'))
+                    .map(a => {
+                        try { return new URL(a.href).href; } catch { return null; }
+                    })
+                    .filter(href => {
+                        if (!href) return false;
+                        try {
+                            const host = new URL(href).hostname;
+                            return !BLOCKED.some(b => host === b || host.endsWith('.' + b));
+                        } catch { return false; }
+                    });
             }""")
             unique_sources = list(dict.fromkeys(sources))
 
-            # Standardized layout normalization for clean snaps (Light Mode Enforcement)
+            # Light mode enforcement — ChatGPT uses next-themes: class on <html> is "dark" or "light"
             await page.evaluate("""() => {
-                document.documentElement.classList.remove('dark', 'theme-dark');
-                document.documentElement.classList.add('light', 'theme-light');
+                document.documentElement.classList.remove('dark');
+                document.documentElement.classList.add('light');
                 document.documentElement.setAttribute('data-theme', 'light');
                 document.documentElement.style.colorScheme = 'light';
             }""")
@@ -308,9 +337,9 @@ class ChatGPTFactory:
                 if "challenges.cloudflare.com" in page.url.lower():
                     raise RuntimeError(f"Cloudflare hard block detected. Marking proxy as banned.")
 
-                print(f"[FACTORY:CHATGPT] Waiting for React hydration...")
+                print(f"[FACTORY:CHATGPT] Waiting for page hydration...")
                 try:
-                    await page.wait_for_selector('#root > *', timeout=30000)
+                    await page.wait_for_selector('div#prompt-textarea, button[data-testid="send-button"]', timeout=30000)
                 except Exception:
                     pass
 
@@ -319,8 +348,8 @@ class ChatGPTFactory:
                 await page.evaluate('''() => {
                     const style = document.createElement('style');
                     style.innerHTML = `
-                        iframe[src*="smartlock"], iframe[src*="account"], iframe[title*="Google"], 
-                        div[role="dialog"], .cdk-overlay-container, [class*="backdrop"], #credential_picker_container,
+                        iframe[src*="smartlock"], iframe[src*="account"], iframe[title*="Google"],
+                        div[role="dialog"], [class*="backdrop"], #credential_picker_container,
                         #cookie-consent {
                             display: none !important; opacity: 0 !important; pointer-events: none !important;
                             z-index: -9999 !important; visibility: hidden !important;
@@ -331,22 +360,40 @@ class ChatGPTFactory:
                 await asyncio.sleep(1)
 
                 # ── Tiny Prompt Injection ──────────────────────────────
-                print(f"[FACTORY:CHATGPT] Submitting tiny prompt to initialize UI and cache WASM/WebSockets...")
-                input_selector = 'textarea, [contenteditable="true"]'
+                print(f"[FACTORY:CHATGPT] Submitting tiny prompt to initialize UI and cache WebSockets...")
+                input_selector = 'div#prompt-textarea, div#prompt-textarea.ProseMirror'
                 input_element = page.locator(input_selector).first
-                
+
                 try:
                     await input_element.wait_for(state="attached", timeout=45000)
-                    await input_element.focus()
-                    
-                    await page.keyboard.insert_text(self.tiny_prompt)
-                    await asyncio.sleep(1.0)
-                    await page.keyboard.press("Enter")
-                    await asyncio.sleep(1.0)
-                    
-                    send_btn = page.locator('button[data-testid="send-button"]').first
+                    await input_element.click()
+                    await asyncio.sleep(0.3)
+
+                    await page.keyboard.type(self.tiny_prompt, delay=30)
+                    await asyncio.sleep(0.5)
+
+                    try:
+                        await page.locator('button[data-testid="send-button"]:not([disabled])').wait_for(state="visible", timeout=5000)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.3)
+
+                    # Dismiss tooltip/popover overlays before clicking
+                    await page.evaluate("""() => {
+                        document.querySelectorAll('[popover]').forEach(el => {
+                            try { el.hidePopover(); } catch {}
+                        });
+                    }""")
+                    await asyncio.sleep(0.1)
+
+                    send_btn = page.locator('button[data-testid="send-button"], button#composer-submit-button').first
                     if await send_btn.count() > 0 and await send_btn.is_visible():
-                        await send_btn.click()
+                        try:
+                            await send_btn.click(force=True)
+                        except Exception:
+                            await page.keyboard.press("Enter")
+                    else:
+                        await page.keyboard.press("Enter")
                         
                     await asyncio.sleep(3)
                     print(f"[FACTORY:CHATGPT] Tiny prompt accepted. Session is fully trusted.")

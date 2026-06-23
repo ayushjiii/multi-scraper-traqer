@@ -1,28 +1,52 @@
-# 1. Credentials & Secrets (CRITICAL)
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Credentials & Secrets  (CRITICAL — never commit these)
+# ─────────────────────────────────────────────────────────────────────────────
 .env
+.env.*
+!.env.example
+proxies.txt
 proxies_list.txt
+# Raw proxy exports (e.g. "Webshare 10 proxies.txt") — these contain live creds
+*proxies*.txt
+*Webshare*.txt
+*webshare*.txt
 
+# ─────────────────────────────────────────────────────────────────────────────
 # 2. Virtual Environments
+# ─────────────────────────────────────────────────────────────────────────────
 .venv/
 venv/
 env/
+ENV/
 
-# 3. Dynamic Output & Heavy Data
+# ─────────────────────────────────────────────────────────────────────────────
+# 3. Dynamic Output & Heavy Data  (regenerated at runtime)
+# ─────────────────────────────────────────────────────────────────────────────
 profiles/
 screenshots/
 *.log
 
-# 4. Python Cache
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. Python Cache & Build
+# ─────────────────────────────────────────────────────────────────────────────
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
 
-# 5. IDE & OS Files
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. IDE, OS & Tooling
+# ─────────────────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
 .DS_Store
+Thumbs.db
 .agents
-graphify-out
-objectives.txt
+.claude/
+graphify-out/
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 6. Personal notes (not for the repo)
+# ─────────────────────────────────────────────────────────────────────────────
+objectives.txt
