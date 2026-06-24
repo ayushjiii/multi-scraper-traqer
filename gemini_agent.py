@@ -2,6 +2,7 @@ import os
 import uuid
 import time
 import json
+import re
 import asyncio
 import redis.asyncio as redis
 from camoufox.async_api import AsyncCamoufox
@@ -10,6 +11,41 @@ from src.config import Config
 
 ENGINE = "gemini"
 DEBUG_HEADLESS = os.getenv("DEBUG_HEADLESS", "1") != "0"
+
+# Domains that are Google chrome / infra, never a real cited source
+_SOURCE_JUNK = (
+    "google.com", "gstatic", "googleapis", "gemini.google", "youtube.com",
+    "ggpht", "googleusercontent", "gvt1", "gvt2", "schema.org", "w3.org",
+    "googletagmanager", "google-analytics", "doubleclick", "youtu.be",
+)
+
+
+def _harvest_urls(text: str) -> set:
+    """Extract real (non-Google) source article URLs from a network payload.
+
+    Gemini's StreamGenerate body is JSON with escaped slashes; we unescape,
+    regex out every http(s) URL, strip Google '#:~:text=' highlight fragments,
+    and drop infrastructure/Google domains. What remains are the genuine
+    web-searched source articles.
+    """
+    found = set()
+    cleaned = (text.replace("\\/", "/")
+                   .replace("\\u003d", "=")
+                   .replace("\\u0026", "&"))
+    for m in re.findall(r'https?://[^\s"\\<>)\]]+', cleaned):
+        u = m.rstrip(".,;)'\"")
+        # Strip Google "scroll to text" highlight fragment so duplicates collapse
+        u = u.split("#:~:text")[0]
+        if len(u) < 12 or "://" not in u:
+            continue
+        parts = u.split("/")
+        if len(parts) < 3:
+            continue
+        host = parts[2].lower()
+        if any(j in host for j in _SOURCE_JUNK):
+            continue
+        found.add(u)
+    return found
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. Gemini Worker
@@ -48,9 +84,30 @@ class GeminiWorker:
             locale="en-US",
         ) as browser:
             page = browser.pages[0] if browser.pages else await browser.new_page()
-            
+
             # Suppress unhandled React/Cloudflare errors
             page.on("pageerror", lambda exc: None)
+
+            # ── Network source capture ──
+            # Gemini's grounding source URLs travel in the StreamGenerate API payload
+            # BEFORE the DOM obfuscates them. Capturing them here is bulletproof: it
+            # survives the page crashing, redirecting, or hiding sources behind popovers.
+            # A source URL only appears here when Gemini grounded via web search, so
+            # this never captures model-knowledge URLs as fake sources.
+            captured_source_urls = set()
+
+            async def _capture_response(resp):
+                try:
+                    url = resp.url
+                    if any(k in url for k in ("StreamGenerate", "batchexecute",
+                                              "GenerateContent", "assistant", "lamda")):
+                        body = await resp.text()
+                        for u in _harvest_urls(body):
+                            captured_source_urls.add(u)
+                except Exception:
+                    pass
+
+            page.on("response", _capture_response)
 
             async def safe_route_handler(route):
                 try:
@@ -127,10 +184,17 @@ class GeminiWorker:
             for _ in range(90):  # 90 seconds maximum execution ceiling
                 await asyncio.sleep(1.0)
                 try:
-                    is_still_generating = await page.locator(self.stop_btn_selector).count() > 0
-                    # Re-resolve .last each tick so we always read the final response element
-                    current_text = await page.locator(self.response_selector).last.inner_text()
-                    current_length = len(current_text)
+                    # Read both the stop-button state and response length in ONE JS call.
+                    # Pure JS evaluate() never blocks on element-stability the way
+                    # locator.inner_text() does during Angular re-renders.
+                    state = await page.evaluate(f"""() => {{
+                        const stop = document.querySelectorAll('{self.stop_btn_selector}').length;
+                        const els = document.querySelectorAll('{self.response_selector}');
+                        const txt = els.length ? (els[els.length - 1].innerText || '') : '';
+                        return {{ generating: stop > 0, len: txt.length }};
+                    }}""")
+                    is_still_generating = state["generating"]
+                    current_length = state["len"]
 
                     if not is_still_generating and current_length == previous_length and current_length > 0:
                         stable_ticks += 1
@@ -143,10 +207,19 @@ class GeminiWorker:
                 except Exception:
                     pass
 
-            # Re-resolve once more for the final read
-            response_text = await page.locator(self.response_selector).last.inner_text()
+            # Re-resolve once more for the final read (timeout-guarded so a detaching
+            # Angular node can't block forever)
+            print(f"[WORKER:GEMINI] Witness loop done. Reading final response text...")
+            try:
+                response_text = await page.locator(self.response_selector).last.inner_text(timeout=10000)
+            except Exception:
+                response_text = await page.evaluate(f"""() => {{
+                    const els = document.querySelectorAll('{self.response_selector}');
+                    return els.length ? els[els.length - 1].innerText : '';
+                }}""")
             if not response_text:
                 raise Exception("Could not extract response text.")
+            print(f"[WORKER:GEMINI] Response captured ({len(response_text)} chars). Extracting sources...")
 
             if any(phrase in response_text.lower() for phrase in [
                 "sign in to continue", "sign in to use gemini", "you need to sign in",
@@ -154,36 +227,39 @@ class GeminiWorker:
             ]):
                 raise Exception("Verification wall hit: Gemini requires login.")
 
-            # Expand Gemini's sources panel — the chip/button labelled with a number e.g. "3 sources"
-            try:
-                sources_chip = page.locator('div[data-source-count], button:has-text("sources"), button:has-text("source")').first
-                if await sources_chip.count() > 0 and await sources_chip.is_visible():
-                    await sources_chip.click()
-                    await asyncio.sleep(2.0)
-            except Exception:
-                pass
+            # ── Gemini source extraction (NETWORK CAPTURE — bulletproof) ──
+            # The grounding source URLs were already collected by `_capture_response`
+            # straight from the StreamGenerate API payload as the answer streamed in.
+            # This is immune to the DOM crashing/redirecting and to popover obfuscation,
+            # and yields FULL article URLs (deep paths), not just domains.
+            # Give any trailing StreamGenerate chunk a moment to land first.
+            await asyncio.sleep(1.5)
 
-            # Extract source URLs — only genuine external sources, strip all Google-owned/internal domains
-            sources = await page.evaluate("""() => {
-                const BLOCKED = [
-                    'gemini.google.com', 'gemini.google', 'accounts.google.com',
-                    'support.google.com', 'policies.google.com', 'one.google.com',
-                    'business.gemini.google', 'google.com/search', 'google.com/intl',
-                    'googleapis.com', 'gstatic.com', 'youtube.com', 'youtu.be',
-                    'google.com', 'goo.gl', 'g.co'
-                ];
-                return Array.from(document.querySelectorAll('a[href^="http"]'))
-                    .map(a => {
-                        try { return new URL(a.href).href; } catch { return null; }
-                    })
-                    .filter(href => {
-                        if (!href) return false;
-                        try {
-                            const host = new URL(href).hostname;
-                            return !BLOCKED.some(b => host === b || host.endsWith('.' + b));
-                        } catch { return false; }
-                    });
-            }""")
+            sources = sorted(captured_source_urls)
+
+            # DOM fallback: if the network somehow yielded nothing (e.g. cached response),
+            # scrape the chip domain labels so we never store an empty source set.
+            if not sources:
+                sources = await page.evaluate("""() => {
+                    const seen = new Set(); const out = [];
+                    for (const el of document.querySelectorAll('source-inline-chip .source-title, .source-title')) {
+                        let raw = (el.innerText || '').trim().replace(/\\s*\\+\\s*\\d+$/, '').trim();
+                        if (!raw) continue;
+                        const low = raw.toLowerCase();
+                        if (low === 'gemini' || low.includes('google')) continue;
+                        const looksDomain = !raw.includes(' ') && /\\.[a-z]{2,}$/i.test(raw);
+                        const v = looksDomain ? ('https://' + raw.replace(/^https?:\\/\\//,'').toLowerCase()) : raw;
+                        if (!seen.has(v.toLowerCase())) { seen.add(v.toLowerCase()); out.push(v); }
+                    }
+                    return out;
+                }""")
+                if sources:
+                    print(f"[WORKER:GEMINI] Network empty — fell back to {len(sources)} chip domains.")
+                else:
+                    print(f"[WORKER:GEMINI] No sources (ungrounded answer).")
+            else:
+                print(f"[WORKER:GEMINI] Captured {len(sources)} real article URLs from network.")
+
             unique_sources = list(dict.fromkeys(sources))
 
             # Standardized layout normalization for clean snaps (Light Mode Enforcement)

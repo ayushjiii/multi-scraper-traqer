@@ -24,7 +24,12 @@ ENV/
 # ─────────────────────────────────────────────────────────────────────────────
 profiles/
 screenshots/
+logs/
 *.log
+
+# Camoufox downloads its patched Firefox + GeoIP DB into a local cache
+.camoufox/
+camoufox-*/
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Python Cache & Build

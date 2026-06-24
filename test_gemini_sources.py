@@ -185,7 +185,69 @@ async def main():
         for c in customs:
             print(f"    <{c}>")
 
-        print("\n[TEST] Browser stays open 120s. Manually click the sources expander and watch.")
+        # ── Click the FIRST source chip and dump the popover that opens ──
+        print("\n[TEST] === Clicking first source chip to reveal popover URL ===")
+        try:
+            chip_btn = page.locator('button.multiple-button, source-inline-chip button, [class*="source-inline-chip"] button').first
+            if await chip_btn.count() > 0:
+                await chip_btn.scroll_into_view_if_needed()
+                await asyncio.sleep(0.3)
+                await chip_btn.click()
+                await asyncio.sleep(2.0)
+                popover = await page.evaluate("""() => {
+                    const out = [];
+                    // gem-popover / cdk overlay holds the expanded source detail
+                    const containers = document.querySelectorAll('gem-popover, .cdk-overlay-container, sources-list, [role="tooltip"]');
+                    for (const c of containers) {
+                        for (const a of c.querySelectorAll('a[href]')) {
+                            out.push({ text: (a.innerText||'').trim().slice(0,40), href: a.href });
+                        }
+                    }
+                    return out;
+                }""")
+                print(f"  Popover links found: {len(popover)}")
+                for p in popover:
+                    print(f"    text='{p['text']}' -> {p['href']}")
+            else:
+                print("  No clickable source chip found.")
+        except Exception as e:
+            print(f"  Chip click failed: {e}")
+
+        # ── Also try opening the full <sources-list> panel ──
+        print("\n[TEST] === Looking for a sources-list / 'Sources' expander ===")
+        try:
+            expander = page.locator('sources-list button, button[aria-label*="ources"], button:has-text("Sources")').first
+            if await expander.count() > 0 and await expander.is_visible():
+                await expander.click()
+                await asyncio.sleep(2.0)
+                panel_links = await page.evaluate("""() => {
+                    const out = [];
+                    for (const a of document.querySelectorAll('sources-list a[href], .cdk-overlay-container a[href]')) {
+                        out.push({ text: (a.innerText||'').trim().slice(0,40), href: a.href });
+                    }
+                    return out;
+                }""")
+                print(f"  sources-list panel links: {len(panel_links)}")
+                for p in panel_links[:20]:
+                    print(f"    text='{p['text']}' -> {p['href']}")
+            else:
+                print("  No sources-list expander visible.")
+        except Exception as e:
+            print(f"  Expander failed: {e}")
+
+        # ── Final: all chip publisher names (always reliable) ──
+        print("\n[TEST] === All source publisher names (chips) ===")
+        names = await page.evaluate("""() => {
+            const out = [];
+            for (const el of document.querySelectorAll('.source-title, source-inline-chip .source-title')) {
+                const t = (el.innerText||'').trim();
+                if (t) out.push(t);
+            }
+            return out;
+        }""")
+        print(f"  {len(names)} names: {names}")
+
+        print("\n[TEST] Browser stays open 120s. Inspect the popover/panel manually too.")
         print("[TEST] Ctrl+C to exit.\n")
         await asyncio.sleep(120)
 

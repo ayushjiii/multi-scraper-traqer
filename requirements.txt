@@ -1,10 +1,32 @@
-camoufox[geoip]==0.4.11
-asyncpg
-redis==5.0.4
-python-dotenv==1.0.1
-scipy
-python-ghost-cursor==0.1.1  
+# ─────────────────────────────────────────────────────────────────────────────
+# Traqer Scraper — Python dependencies
+# Tested on Python 3.13.7
+# Install:  pip install -r requirements.txt
+# ─────────────────────────────────────────────────────────────────────────────
 
-# make sure to fire this cmds because ghostworkers isnt updated yet for the python 3.13
-# $env:BEZIER_NO_EXTENSION="True"
-# $env:BEZIER_IGNORE_VERSION_CHECK="True"
+# Browser automation (anti-detection Firefox). The [geoip] extra pulls the
+# MaxMind database used to match browser locale/timezone to the proxy's country.
+camoufox[geoip]==0.4.11
+
+# Camoufox drives Firefox through Playwright's protocol; pinned for reproducibility.
+playwright==1.60.0
+
+# PostgreSQL async driver (connection pool, FOR UPDATE SKIP LOCKED checkout)
+asyncpg==0.31.0
+
+# Redis async client (task queues: task_queue:{engine})
+redis==5.0.4
+
+# Loads .env into the environment (src/config.py)
+python-dotenv==1.0.1
+
+# Pulled in by Camoufox for fingerprint generation / scientific helpers.
+# Pinned because Camoufox is sensitive to these versions.
+scipy==1.17.1
+numpy==2.4.6
+browserforge==1.2.4
+
+# Optional: human-like cursor movement (only if a humanize path is enabled).
+# NOTE: not yet updated for Python 3.13 — see the README "ghost-cursor on 3.13"
+# note before installing. Safe to omit if you don't use humanized cursor paths.
+python-ghost-cursor==0.1.1
