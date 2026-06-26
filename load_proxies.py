@@ -83,12 +83,13 @@ async def load_proxies(replace: bool = False):
 
     inserted = 0
     for p in proxies:
-        # Insert new; on conflict (already known) leave its status/ban flags untouched
+        # Insert new; on conflict (already known) leave its status/ban flags untouched.
+        # asyncpg returns "INSERT 0 1" when a row was inserted, "INSERT 0 0" on conflict.
         result = await db.execute(
             "INSERT INTO proxies (connection_string) VALUES ($1) ON CONFLICT (connection_string) DO NOTHING",
             p,
         )
-        if result and result.endswith("1"):
+        if result == "INSERT 0 1":
             inserted += 1
 
     total = await db.fetchval("SELECT COUNT(*) FROM proxies")

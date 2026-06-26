@@ -318,7 +318,7 @@ Screenshots are written to `screenshots/<task_id>.jpg`.
 | `check_results.py`   | Dump the latest scrape results with source lists |
 | `show_schema.py`     | Print the live PostgreSQL schema |
 | `clear_queues.py`    | Clear Redis task queues (`clear_queues.py gemini` for one engine) |
-| `expire_profiles.py` | Mark all AVAILABLE profiles EXPIRED so the factory re-warms them |
+| `expire_profiles.py` | Mark AVAILABLE profiles EXPIRED so the factory re-warms them (all engines, or pass an engine name to scope it) |
 | `test_*.py`          | Headless-visible debugging tools used while building each engine |
 
 A typical reset between runs:
@@ -370,6 +370,12 @@ better than datacenter ones for Perplexity and ChatGPT.
 **A task shows 0 sources**
 That answer wasn't grounded in web search — the engine answered from its own
 knowledge. There were no sources to capture. This is expected, not a failure.
+
+**A task keeps failing and disappears**
+After 5 failed attempts a task is moved to a dead-letter list
+(`task_queue:<engine>:dead`) instead of requeuing forever. Inspect it with
+`redis-cli LRANGE task_queue:gemini:dead 0 -1`, fix the root cause (usually a
+dead proxy or a login wall), and `LPUSH` it back to `task_queue:gemini` to retry.
 
 **Browser opens visibly / want to watch it**
 Set `DEBUG_HEADLESS=0` in your environment to run the browser non-headless.

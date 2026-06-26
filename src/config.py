@@ -1,4 +1,5 @@
 import os
+from urllib.parse import quote
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,7 +11,11 @@ class Config:
     DB_USER = os.getenv("DB_USER", "postgres")
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 
-    DB_DSN = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    # URL-encode user/password so special chars (@ : / ? #) don't corrupt the DSN.
+    DB_DSN = (
+        f"postgresql://{quote(DB_USER, safe='')}:{quote(DB_PASSWORD, safe='')}"
+        f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    )
 
     REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
     REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))

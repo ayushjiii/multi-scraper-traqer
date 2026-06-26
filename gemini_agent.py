@@ -8,6 +8,7 @@ import redis.asyncio as redis
 from camoufox.async_api import AsyncCamoufox
 from src.database import DatabaseManager
 from src.config import Config
+from src.utils import parse_proxy, safe_task_id
 
 ENGINE = "gemini"
 DEBUG_HEADLESS = os.getenv("DEBUG_HEADLESS", "1") != "0"
@@ -33,7 +34,7 @@ def _harvest_urls(text: str) -> set:
                    .replace("\\u003d", "=")
                    .replace("\\u0026", "&"))
     for m in re.findall(r'https?://[^\s"\\<>)\]]+', cleaned):
-        u = m.rstrip(".,;)'\"")
+        u = m.rstrip(".,;)'\"\\")
         # Strip Google "scroll to text" highlight fragment so duplicates collapse
         u = u.split("#:~:text")[0]
         if len(u) < 12 or "://" not in u:
@@ -65,16 +66,16 @@ class GeminiWorker:
         self.stop_btn_selector = 'button[aria-label="Stop response"], button[aria-label*="Stop"]'
 
     def _parse_proxy(self, proxy_str: str) -> dict:
-        if not proxy_str: return None
-        parts = proxy_str.split(":")
-        if len(parts) != 4: return None
-        return {"server": f"http://{parts[0]}:{parts[1]}", "username": parts[2], "password": parts[3]}
+        return parse_proxy(proxy_str)
 
     async def execute_task(self, prompt: str, task_id: str):
         print(f"[WORKER:GEMINI] Launching profile: {os.path.basename(self.profile_path)}")
-        
+
         camoufox_proxy = self._parse_proxy(self.proxy_string)
-        
+        # Refuse to launch unproxied when a proxy was assigned — proxy=None leaks the real IP.
+        if self.proxy_string and camoufox_proxy is None:
+            raise Exception(f"Proxy string is malformed; refusing to launch unproxied: {self.proxy_string!r}")
+
         async with AsyncCamoufox(
             headless=DEBUG_HEADLESS,
             persistent_context=True,
@@ -295,7 +296,7 @@ class GeminiWorker:
             
             await asyncio.sleep(2.0)
             
-            shot_path = os.path.join(self.screenshot_dir, f"{task_id}.jpg")
+            shot_path = os.path.join(self.screenshot_dir, f"{safe_task_id(task_id)}.jpg")
             await page.screenshot(path=shot_path, full_page=True, type="jpeg", quality=85)
             print(f"[WORKER:GEMINI] Verification screenshot saved: {shot_path}")
 
@@ -319,9 +320,7 @@ class GeminiFactory:
         self.tiny_prompt = "hi"
 
     def _parse_proxy(self, proxy_str: str) -> dict:
-        parts = proxy_str.split(":")
-        if len(parts) != 4: return None
-        return {"server": f"http://{parts[0]}:{parts[1]}", "username": parts[2], "password": parts[3]}
+        return parse_proxy(proxy_str)
 
     async def warm_new_profile(self) -> str:
         profile_name = f"{self.engine}_{uuid.uuid4().hex[:8]}"
@@ -348,6 +347,8 @@ class GeminiFactory:
 
                 proxy_str = proxy_row["connection_string"]
                 camoufox_proxy = self._parse_proxy(proxy_str)
+                if camoufox_proxy is None:
+                    raise RuntimeError(f"Malformed proxy string from DB, cannot warm unproxied: {proxy_str!r}")
 
                 row = await conn.fetchrow("""
                     INSERT INTO browser_profiles
@@ -477,11 +478,14 @@ class GeminiFactory:
     async def run_daemon(self, target_pool_size: int = 1):
         print(f"\n[FACTORY DAEMON:GEMINI] Started. Target pool: {target_pool_size}.")
         while True:
-            await self.db.execute(f"""
-                UPDATE browser_profiles SET status = 'EXPIRED'
-                WHERE status = 'AVAILABLE' AND engine_type = '{self.engine}'
-                AND created_at < NOW() - INTERVAL '{Config.PROFILE_TTL_MINUTES} minutes'
-            """)
+            # TTL = idle time: expire profiles unused for PROFILE_TTL_MINUTES, not ones
+            # that merely existed that long (last_used_at, not created_at).
+            await self.db.execute(
+                "UPDATE browser_profiles SET status = 'EXPIRED' "
+                "WHERE status = 'AVAILABLE' AND engine_type = $1 "
+                "AND last_used_at < NOW() - make_interval(mins => $2)",
+                self.engine, Config.PROFILE_TTL_MINUTES,
+            )
 
             available = await self.db.fetchval(
                 "SELECT COUNT(*) FROM browser_profiles WHERE engine_type = $1 AND status = 'AVAILABLE'", self.engine
@@ -530,13 +534,26 @@ class GeminiOrchestrator:
 
     async def release_profile(self, profile_id: str, success: bool):
         new_status = 'AVAILABLE' if success else 'EXPIRED'
-        score_adj  = "+ 1" if success else "- 10"
-        await self.db.execute(f"""
-            UPDATE browser_profiles
-            SET status = $1, trust_score = GREATEST(0, LEAST(100, trust_score {score_adj}))
-            WHERE id = $2
-        """, new_status, profile_id)
+        delta = 1 if success else -10
+        await self.db.execute(
+            "UPDATE browser_profiles "
+            "SET status = $1, trust_score = GREATEST(0, LEAST(100, trust_score + $2)) "
+            "WHERE id = $3",
+            new_status, delta, profile_id,
+        )
         print(f"[ORCHESTRATOR:GEMINI] Released profile {profile_id} -> {new_status}")
+
+    async def _ban_proxy(self, connection_string: str):
+        # Column name is chosen from a fixed whitelist (never interpolated from input).
+        col = {
+            "chatgpt": "chatgpt_banned",
+            "perplexity": "perplexity_banned",
+            "gemini": "gemini_banned",
+        }[self.engine]
+        await self.db.execute(
+            f"UPDATE proxies SET {col} = TRUE WHERE connection_string = $1",
+            connection_string,
+        )
 
     async def process_task(self, task_payload: dict):
         task_id = task_payload.get("task_id", "unknown")
@@ -588,10 +605,7 @@ class GeminiOrchestrator:
             if any(term in error_msg for term in ["Proxy IP burned", "Cloudflare", "Verification wall", "Timeout"]):
                 if profile.get("proxy_string"):
                     try:
-                        banned_col = f"{self.engine}_banned"
-                        await self.db.execute(f"""
-                            UPDATE proxies SET {banned_col} = TRUE WHERE connection_string = $1
-                        """, profile["proxy_string"])
+                        await self._ban_proxy(profile["proxy_string"])
                         print(f"[ORCHESTRATOR:GEMINI] Proxy flagged as banned for this engine.")
                     except Exception:
                         pass
@@ -634,37 +648,60 @@ async def main():
     concurrency_limit = max(1, Config.MAX_CONCURRENT_WORKERS // 3)
     semaphore = asyncio.Semaphore(concurrency_limit)
     queue_name = f"task_queue:{ENGINE}"
+    dead_queue = f"{queue_name}:dead"
+    MAX_ATTEMPTS = 5
+
+    inflight = set()   # retain task refs so fire-and-forget tasks aren't GC'd mid-run
+
+    async def requeue(task_data):
+        """Requeue with an attempt counter; route to the dead-letter list past the cap."""
+        task_data["attempts"] = int(task_data.get("attempts", 0)) + 1
+        if task_data["attempts"] >= MAX_ATTEMPTS:
+            print(f"[GEMINI] Task {task_data.get('task_id')} hit {MAX_ATTEMPTS} attempts — dead-lettering.")
+            await r.lpush(dead_queue, json.dumps(task_data))
+        else:
+            await asyncio.sleep(min(2 * task_data["attempts"], 10))
+            await r.lpush(queue_name, json.dumps(task_data))
 
     async def process_task(task_data):
-        async with semaphore:
-            try:
-                success = await orchestrator.process_task(task_data)
-                if not success:
-                    print(f"[GEMINI] Task {task_data.get('task_id')} failed — requeuing.")
-                    await r.lpush(queue_name, json.dumps(task_data))
-            except Exception as e:
-                print(f"[GEMINI] CRITICAL: {e}")
-                await asyncio.sleep(5)
-                await r.lpush(queue_name, json.dumps(task_data))
+        # Semaphore is already held by the dispatcher before this task was created.
+        try:
+            success = await orchestrator.process_task(task_data)
+            if not success:
+                print(f"[GEMINI] Task {task_data.get('task_id')} failed — requeuing.")
+                await requeue(task_data)
+        except Exception as e:
+            print(f"[GEMINI] CRITICAL: {e}")
+            await requeue(task_data)
+        finally:
+            semaphore.release()
 
     print(f"\n[GEMINI] Dispatcher online. Listening on {queue_name}...")
     try:
         while True:
-            dispatched = False
-            if semaphore._value > 0 and await r.llen(queue_name) > 0:
+            await semaphore.acquire()
+            raw_task = None
+            try:
                 avail = await db_manager.fetchval(
                     "SELECT COUNT(*) FROM browser_profiles WHERE engine_type = $1 AND status = 'AVAILABLE'", ENGINE
                 )
-                if avail > 0:
+                if avail > 0 and await r.llen(queue_name) > 0:
                     raw_task = await r.rpop(queue_name)
-                    if raw_task:
-                        asyncio.create_task(process_task(json.loads(raw_task)))
-                        dispatched = True
-            if not dispatched:
+            except Exception as e:
+                print(f"[GEMINI] Dispatch poll error: {e}")
+
+            if raw_task:
+                task = asyncio.create_task(process_task(json.loads(raw_task)))
+                inflight.add(task)
+                task.add_done_callback(inflight.discard)
+            else:
+                semaphore.release()
                 await asyncio.sleep(1)
     except asyncio.CancelledError:
         pass
     finally:
+        if inflight:
+            await asyncio.gather(*inflight, return_exceptions=True)
         if not factory_task.done():
             factory_task.cancel()
             try:

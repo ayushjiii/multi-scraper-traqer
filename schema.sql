@@ -1,5 +1,5 @@
-CREATE TYPE profile_status AS ENUM ('AVAILABLE', 'BUSY', 'COOLDOWN', 'EXPIRED');
-CREATE TYPE proxy_status AS ENUM ('ACTIVE', 'DOWN', 'RATE_LIMITED');
+-- Profile lifecycle states actually used by the agents.
+CREATE TYPE profile_status AS ENUM ('AVAILABLE', 'BUSY', 'EXPIRED');
 
 CREATE TABLE browser_profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -7,7 +7,7 @@ CREATE TABLE browser_profiles (
     engine_type VARCHAR(30) NOT NULL,
     storage_path TEXT NOT NULL,
     status profile_status DEFAULT 'AVAILABLE',
-    trust_score INT DEFAULT 0,
+    trust_score INT DEFAULT 100,
     last_used_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     proxy_string TEXT
@@ -16,9 +16,8 @@ CREATE TABLE browser_profiles (
 CREATE TABLE proxies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     connection_string TEXT UNIQUE NOT NULL,
-    status proxy_status DEFAULT 'ACTIVE',
-    consecutive_failures INT DEFAULT 0,
-    last_tested_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    -- Banning is per-engine: a proxy can be burned on one engine but fine on others.
+    status VARCHAR(20) DEFAULT 'ACTIVE',
     chatgpt_banned BOOLEAN DEFAULT FALSE,
     perplexity_banned BOOLEAN DEFAULT FALSE,
     gemini_banned BOOLEAN DEFAULT FALSE
