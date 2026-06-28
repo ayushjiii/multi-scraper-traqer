@@ -1,9 +1,9 @@
 # Traqer Scraper
 
 A multi-engine AI answer-scraping microservice. It submits prompts to **ChatGPT**,
-**Perplexity**, and **Gemini** through real anti-detection browsers, then captures
-each AI's answer, its cited source URLs, and a full-page screenshot — storing
-everything in PostgreSQL.
+**Perplexity**, **Gemini**, and **Google AI Overviews** through real anti-detection
+browsers, then captures each AI's answer, its cited source URLs, and a full-page
+screenshot — storing everything in PostgreSQL.
 
 Built for GEO (Generative Engine Optimization): track how AI engines answer
 buyer-intent queries and which sources they cite, across rotating proxies and
@@ -30,9 +30,15 @@ Source extraction is engine-specific and battle-tested:
 | Perplexity | Opens the "N sources" panel (single toggle click), reads the citation links from the DOM |
 | Gemini     | **Network capture** — reads grounding source URLs straight from the `StreamGenerate` API payload (immune to DOM crashes / obfuscation; yields full article URLs) |
 | ChatGPT    | Runs on **Playwright Chromium** (not Camoufox) — ChatGPT walls Firefox's anonymous use. Uses a Chrome fingerprint + human-cadence typing; extracts citation links from the open Sources panel |
+| AI Overviews (`aio`) | Searches `google.com`, waits for the AI Overview to hydrate, extracts the answer from the block (detected by stable attributes + the "AI Overview" heading, never rotating CSS classes). Sources via **network capture** of the `/async/` hydration payload, with a DOM citation fallback. URLs are direct publisher deep-links |
 
 > A source only appears when the engine actually grounded the answer via web
 > search. Knowledge-only answers legitimately return zero sources.
+
+> **Google AI Overviews are non-deterministic.** Only ~30–50% of queries trigger
+> one (comparison and question-style queries trigger most; navigational/brand
+> queries rarely do). When no AI Overview appears, the `aio` agent records a valid
+> result with an empty answer — that's expected, not a failure. See Troubleshooting.
 
 ---
 
@@ -46,19 +52,19 @@ Each engine runs as an independent microservice (`<engine>_agent.py`) with four 
 - **Dispatcher (`main`)** — pulls tasks from this engine's Redis queue.
 
 ```
-                 dispatch.py
-                     │  (pushes one task per engine)
-        ┌────────────┼────────────┐
-        ▼            ▼            ▼
- task_queue:    task_queue:   task_queue:
-   chatgpt       perplexity      gemini      ← Redis
-        │            │            │
-        ▼            ▼            ▼
- chatgpt_agent  perplexity_   gemini_agent   ← one process each
+                       dispatch.py
+                           │  (pushes one task per engine)
+     ┌──────────────┬──────┴───────┬──────────────┐
+     ▼              ▼              ▼              ▼
+ task_queue:    task_queue:    task_queue:    task_queue:
+   chatgpt       perplexity      gemini          aio       ← Redis
+     │              │              │              │
+     ▼              ▼              ▼              ▼
+ chatgpt_agent  perplexity_    gemini_agent   aio_agent    ← one process each
                   agent
-        │            │            │
-        └────────────┼────────────┘
-                     ▼
+     │              │              │              │
+     └──────────────┴──────┬───────┴──────────────┘
+                           ▼
               PostgreSQL  (browser_profiles, proxies, scrape_results)
 ```
 
@@ -194,6 +200,14 @@ psql -U postgres -d traqer_db -f schema.sql
 `schema.sql` creates three tables — `browser_profiles`, `proxies`,
 `scrape_results` — plus the supporting enums and indexes.
 
+> **Already have a populated database from an earlier version?** Don't reload
+> `schema.sql` (it would error on existing tables). Instead apply the migrations,
+> which are idempotent:
+> ```bash
+> psql -U postgres -d traqer_db -f migrations/001_add_aio_engine.sql
+> ```
+> This adds the `aio_banned` column needed by the Google AI Overviews agent.
+
 To confirm it worked:
 
 ```bash
@@ -245,6 +259,7 @@ Or start one at a time:
 python gemini_agent.py
 python perplexity_agent.py
 python chatgpt_agent.py
+python aio_agent.py
 ```
 </details>
 
@@ -266,6 +281,10 @@ python perplexity_agent.py
 source .venv/bin/activate
 python chatgpt_agent.py
 ```
+```bash
+source .venv/bin/activate
+python aio_agent.py
+```
 
 Or run them in the background:
 
@@ -274,6 +293,7 @@ mkdir -p logs
 python gemini_agent.py     > logs/gemini.log     2>&1 &
 python perplexity_agent.py > logs/perplexity.log 2>&1 &
 python chatgpt_agent.py    > logs/chatgpt.log    2>&1 &
+python aio_agent.py        > logs/aio.log        2>&1 &
 ```
 </details>
 
@@ -315,7 +335,7 @@ Screenshots are written to `screenshots/<task_id>.jpg`.
 
 | Script | Purpose |
 |--------|---------|
-| `dispatch.py`        | Push prompts to all engine queues (interactive / one-off / file / `--seed`) |
+| `dispatch.py`        | Push prompts to all engine queues — chatgpt, perplexity, gemini, aio (interactive / one-off / file / `--seed`) |
 | `load_proxies.py`    | Load `proxies.txt` into the DB (`--replace` to wipe first) |
 | `check_db.py`        | Proxy counts + per-engine ban status + profile/result counts |
 | `check_results.py`   | Dump the latest scrape results with source lists |
@@ -336,7 +356,7 @@ python expire_profiles.py     # force fresh profiles
 ## Database schema (quick reference)
 
 - **`proxies`** — proxy pool with per-engine ban flags
-  (`chatgpt_banned`, `perplexity_banned`, `gemini_banned`).
+  (`chatgpt_banned`, `perplexity_banned`, `gemini_banned`, `aio_banned`).
 - **`browser_profiles`** — warmed profiles with status
   (`AVAILABLE` / `BUSY` / `COOLDOWN` / `EXPIRED`), assigned proxy, trust score.
 - **`scrape_results`** — `task_id`, `engine_name`, `input_prompt`, `ai_response`,
@@ -374,6 +394,24 @@ better than datacenter ones for Perplexity and ChatGPT.
 That answer wasn't grounded in web search — the engine answered from its own
 knowledge. There were no sources to capture. This is expected, not a failure.
 
+**A Google AI Overview (`aio`) result is empty / has no answer**
+Google only generates an AI Overview for ~30–50% of queries, and it's
+non-deterministic — the same query can show one on one request and skip it on the
+next. Comparison ("X vs Y") and question ("what is X", "how does X work") queries
+trigger one most reliably; navigational, brand-name, and transactional queries
+rarely do. An empty `aio` result means Google didn't render an AI Overview for that
+query — it's a valid, recorded outcome, not a bug.
+
+**The `aio` agent gets CAPTCHA'd or never sees an AI Overview at all**
+Google doesn't just CAPTCHA datacenter IPs — it actively *suppresses* AI features
+for IPs it distrusts, so the AI Overview won't render even when the page loads.
+Datacenter/free proxies get flagged within a handful of queries. Use residential
+or (best) mobile-carrier proxies for `aio`. The factory validates each proxy can
+reach Google without a CAPTCHA before marking it AVAILABLE, so burned proxies are
+flagged (`aio_banned`) instead of silently returning empties. If your whole pool is
+datacenter, expect very few AI Overviews. The documented escalation for scale is a
+SERP API with a structured AI-Overview field (SerpApi, DataForSEO).
+
 **A task keeps failing and disappears**
 After 5 failed attempts a task is moved to a dead-letter list
 (`task_queue:<engine>:dead`) instead of requeuing forever. Inspect it with
@@ -386,6 +424,16 @@ The `test_*.py` scripts do this automatically.
 
 **First launch is slow**
 Camoufox downloads its Firefox binary on first run. Subsequent launches are fast.
+
+**Crash: `TypeError: Cannot read properties of undefined (reading 'url')` / "Connection closed while reading from the driver"**
+This is a Playwright **1.60.0** Firefox driver regression — it crashes the whole
+browser context on sites (like Google Search) that emit an uncaught JS error with
+no location. `requirements.txt` pins `playwright==1.59.0`, which is unaffected. If
+you upgraded Playwright, downgrade it back:
+```bash
+pip install "playwright==1.59.0"
+```
+(See [camoufox#617](https://github.com/daijro/camoufox/issues/617).)
 
 ---
 

@@ -1,5 +1,5 @@
 """
-Traqer Dispatcher — drop a prompt, fan it out to all three engines.
+Traqer Dispatcher — drop a prompt, fan it out to all engines.
 
 Usage:
     # Interactive (prompts you to type):
@@ -11,10 +11,11 @@ Usage:
     # Multiple prompts from a file (one per line):
     python dispatch.py --file prompts.txt
 
-Each prompt is pushed to task_queue:chatgpt, task_queue:perplexity, and
-task_queue:gemini with a shared task_id root so results are easy to correlate.
-Duplicate detection is handled inside each agent (checked against scrape_results
-before execution), so re-dispatching an already-scraped prompt is safe.
+Each prompt is pushed to task_queue:chatgpt, task_queue:perplexity,
+task_queue:gemini, and task_queue:aio (Google AI Overviews) with a shared
+task_id root so results are easy to correlate. Duplicate detection is handled
+inside each agent (checked against scrape_results before execution), so
+re-dispatching an already-scraped prompt is safe.
 """
 import asyncio
 import json
@@ -24,7 +25,7 @@ import argparse
 import redis.asyncio as redis
 from src.config import Config
 
-ENGINES = ["chatgpt", "perplexity", "gemini"]
+ENGINES = ["chatgpt", "perplexity", "gemini", "aio"]
 
 
 async def dispatch(prompts: list[str]):

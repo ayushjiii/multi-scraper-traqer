@@ -132,7 +132,9 @@ class ChatGPTWorker:
                 print(f"[WORKER:CHATGPT] Tracking output buffer...")
                 previous_length = 0
                 stable_ticks = 0
-                for tick in range(180):  # 180s ceiling — ChatGPT web-search answers can be slow
+                zero_output_ticks = 0   # consecutive seconds "generating" with no text = soft-block
+                STALL_LIMIT = 30        # bail after 30s of spinner-but-no-tokens
+                for tick in range(150):  # generous ceiling — web-search answers can be slow
                     await asyncio.sleep(1.0)
                     if "auth.openai.com" in page.url or "log-in" in page.url:
                         raise Exception("Verification wall hit: ChatGPT redirected to login mid-generation.")
@@ -149,6 +151,18 @@ class ChatGPTWorker:
                         current_length = state["len"]
                         if tick % 10 == 0:
                             print(f"[WORKER:CHATGPT]   [{tick}s] len={current_length} generating={is_still_generating}")
+
+                        # Soft-block detection: spinner up but zero tokens for STALL_LIMIT seconds.
+                        # ChatGPT silently withholds the stream when it flags the session — bail
+                        # fast so the orchestrator can retry on a fresh proxy instead of waiting out
+                        # the full ceiling.
+                        if is_still_generating and current_length == 0:
+                            zero_output_ticks += 1
+                            if zero_output_ticks >= STALL_LIMIT:
+                                raise Exception("Soft-block: generating with no tokens (stream withheld).")
+                        else:
+                            zero_output_ticks = 0
+
                         if not is_still_generating and current_length == previous_length and current_length > 0:
                             stable_ticks += 1
                             if stable_ticks >= 3:
@@ -157,7 +171,10 @@ class ChatGPTWorker:
                         else:
                             stable_ticks = 0
                             previous_length = current_length
-                    except Exception:
+                    except Exception as e:
+                        # Re-raise our own soft-block signal; swallow transient eval errors.
+                        if "Soft-block" in str(e):
+                            raise
                         pass
 
                 # Final read (JS, timeout-safe)
@@ -230,7 +247,7 @@ class ChatGPTWorker:
 
                 return {
                     "ai_response": response_text,
-                    "sources": unique_sources[:15],  # cap at 15 to avoid database bloat
+                    "sources": unique_sources,  # ChatGPT: store the full cited source list (uncapped)
                     "screenshot_path": shot_path,
                 }
             finally:
@@ -429,12 +446,18 @@ class ChatGPTOrchestrator:
         except Exception as e:
             error_msg = str(e)
             print(f"[ORCHESTRATOR:CHATGPT] Task {task_id} failed: {error_msg}")
-            
-            if any(term in error_msg for term in ["Proxy IP burned", "Cloudflare", "Verification wall", "Timeout"]):
+
+            # ChatGPT's anonymous wall / soft-block is PROBABILISTIC per attempt — the same
+            # IP often works on a later try. So a wall/soft-block is NOT a permanent ban;
+            # the task simply requeues onto another proxy. Only ban proxies that are truly
+            # dead at the network level (tunnel/connection failures), since those never recover.
+            dead_proxy_signals = ["ERR_TUNNEL_CONNECTION_FAILED", "ERR_PROXY", "ECONNREFUSED",
+                                  "Connection refused", "Failed to connect", "NS_ERROR_PROXY"]
+            if any(sig in error_msg for sig in dead_proxy_signals):
                 if profile.get("proxy_string"):
                     try:
                         await self._ban_proxy(profile["proxy_string"])
-                        print(f"[ORCHESTRATOR:CHATGPT] Proxy flagged as banned for this engine.")
+                        print(f"[ORCHESTRATOR:CHATGPT] Dead proxy banned (connection failure).")
                     except Exception:
                         pass
 
