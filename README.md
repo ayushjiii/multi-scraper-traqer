@@ -29,7 +29,7 @@ Source extraction is engine-specific and battle-tested:
 |------------|-----------------------|
 | Perplexity | Opens the "N sources" panel (single toggle click), reads the citation links from the DOM |
 | Gemini     | **Network capture** — reads grounding source URLs straight from the `StreamGenerate` API payload (immune to DOM crashes / obfuscation; yields full article URLs) |
-| ChatGPT    | DOM citation links from the answer (when web search is active) |
+| ChatGPT    | Runs on **Playwright Chromium** (not Camoufox) — ChatGPT walls Firefox's anonymous use. Uses a Chrome fingerprint + human-cadence typing; extracts citation links from the open Sources panel |
 
 > A source only appears when the engine actually grounded the answer via web
 > search. Knowledge-only answers legitimately return zero sources.
@@ -101,7 +101,8 @@ py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python -m camoufox fetch          # download the Camoufox Firefox binary
+python -m camoufox fetch          # download the Camoufox Firefox binary (Perplexity + Gemini)
+python -m playwright install chromium   # download Chromium (ChatGPT agent runs on it)
 ```
 </details>
 
@@ -118,7 +119,8 @@ python3.13 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python -m camoufox fetch          # download the Camoufox Firefox binary
+python -m camoufox fetch          # download the Camoufox Firefox binary (Perplexity + Gemini)
+python -m playwright install chromium   # download Chromium (ChatGPT agent runs on it)
 ```
 </details>
 
@@ -136,7 +138,8 @@ python3.13 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-python -m camoufox fetch          # download the Camoufox Firefox binary
+python -m camoufox fetch          # download the Camoufox Firefox binary (Perplexity + Gemini)
+python -m playwright install chromium   # download Chromium (ChatGPT agent runs on it)
 
 # Camoufox/Firefox needs some system libraries on a fresh server:
 sudo apt install -y libgtk-3-0 libx11-xcb1 libdbus-glib-1-2 libasound2

@@ -57,3 +57,10 @@ graphify-out/
 objectives.txt
 AUDIT_REPORT.md
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. Throwaway test / debug / DOM-inspection scripts (not part of the service)
+# ─────────────────────────────────────────────────────────────────────────────
+test_*.py
+scratch_*.py
+debug_*.py
+

@@ -8,7 +8,10 @@
 # MaxMind database used to match browser locale/timezone to the proxy's country.
 camoufox[geoip]==0.4.11
 
-# Camoufox drives Firefox through Playwright's protocol; pinned for reproducibility.
+# Camoufox drives Firefox through Playwright's protocol (Perplexity + Gemini).
+# ALSO used directly: the ChatGPT agent runs on Playwright CHROMIUM, because ChatGPT
+# walls Firefox's anonymous use. After install, fetch the Chromium binary:
+#     python -m playwright install chromium
 playwright==1.60.0
 
 # PostgreSQL async driver (connection pool, FOR UPDATE SKIP LOCKED checkout)
