@@ -1,0 +1,178 @@
+CAMOUFOX / PLAYWRIGHT-FIREFOX vs GOOGLE AI OVERVIEWS — IMPLEMENTATION PLAYBOOK
+(Decodo US residential proxy; scraper CAPTCHA'd on human-nav, curl 200 on same IP)
+
+====================================================================
+1. ROOT CAUSE — why the browser gets CAPTCHA'd when curl doesn't
+====================================================================
+
+The curl-vs-browser comparison is a category error, not a clue. Since Jan 2025 Google serves non-JS clients (curl) an empty JS-shell page and never runs its bot-detection code against them. curl gets 200 because it is never challenged — it never loads BotGuard / reCAPTCHA-v3. Your browser DOES execute that JS and is scored on hundreds of live signals curl never touches. So a curl 200 proves only that the IP + TLS path are fine; it tells you nothing about browser trust. The block is browser-side. TLS/JA3 is NOT the culprit — Camoufox's JA3/JA4/HTTP-2 fingerprints are byte-identical to stock Firefox (measured, same IP, issue #555), and an independent 2026 benchmark shows Camoufox PASSES Google Search on its Firefox TLS shape while three Chromium-stealth tools hard-block. So "Camoufox is detected by TLS" is false.
+
+Ranked most-likely causes for your setup:
+
+#1 — COLD SESSION + FINGERPRINT/GEO INCOHERENCE (highest probability).
+A brand-new cookieless context (no NID/SOCS/CONSENT, history.length 0-1) arriving via a typed search is a maximally suspicious "fresh client," and if Camoufox's timezone/locale/Accept-Language/WebRTC don't match the Decodo US exit IP (i.e. geoip not enabled, or a non-US locale forced), that mismatch is a documented instant CAPTCHA trigger. This is the single most common cause of exactly your symptom (curl 200, browser CAPTCHA'd) and the cheapest to fix.
+
+#2 — ROBOTIC BEHAVIOR / velocity on the sticky IP.
+reCAPTCHA-v3 re-scores behavior on every request: mouse-velocity variance, keystroke-timing variance, scroll, dwell. Playwright's default type()/click() are robotically uniform, so "human navigation" that still fires instantly at fixed intervals scores near the bot floor. Compounding it: once your sticky IP tripped the "unusual traffic" page, Google tar-pits that IP — every retry on the same sticky IP keeps failing by design, which likely explains why it "persists on repeat attempts."
+
+#3 — A CERTAIN-FLAG FINGERPRINT LEAK (check, may or may not apply).
+If Camoufox runs on a Linux host while you spoof Windows by hand-setting config keys, navigator.platform still returns "Linux x86_64" on many builds (issue #516) — an instant UA-vs-platform contradiction. This is binary: verify it at runtime; if present it alone will CAPTCHA you 100%.
+
+(Explicitly NOT the cause: TLS/JA3, and — contrary to popular claims — the Firefox-135 base version. A direct test in the maintainer repo reports Google Search works on both 135 and 145; the version only matters for a different property, AI Studio.)
+
+====================================================================
+2. THE FIX, PRIORITIZED — ordered checklist, highest-impact first
+====================================================================
+
+STEP 1 — Match the fingerprint to the proxy geo. (verified)
+Set geoip=True and pass the Decodo proxy into the SAME AsyncCamoufox call so timezone, locale, lat/long, language distribution and the WebRTC IP are all derived from the US exit. Do NOT force a conflicting locale (no de-DE on a US IP); if you set locale at all, set en-US and let geoip own the timezone. Requires: pip install -U 'camoufox[geoip]' then camoufox fetch (~50 MB MaxMind, one-time, off-budget).
+
+STEP 2 — Drive the OS via os=, never by hand-forcing navigator keys, then ASSERT it. (verified)
+Use os="windows" (a string, not a list — a ['windows','macos'] list with a Windows UA is internally inconsistent). Let BrowserForge fill the rest. On the first run, print page.evaluate to check platform==='Win32'. Manual navigator.platform/oscpu/hardwareConcurrency config keys are silently ignored on many builds and leak the real host OS (#516). If you cannot guarantee Win32 from a Linux host, spoof os="linux" instead and keep everything coherent — a coherent Linux browser beats a Windows UA on a Linux platform value.
+
+STEP 3 — Do NOT block WebRTC or WebGL. (verified)
+block_webrtc=False (default) so geoip can rewrite ICE candidates to the proxy IP; blocking it either exposes the real IP or creates a Firefox-default deviation. Leave block_webgl off (Google reads canvas/WebGL; a desktop Firefox with no WebGL is itself anomalous). block_images=True is fine and saves bandwidth.
+
+STEP 4 — Warm a persistent profile per IP; carry cookies across the session. (worth trying — helps at the margin, not a silver bullet)
+persistent_context=True + a stable user_data_dir per sticky IP. First run headed: load google.com/?hl=en&gl=us, accept consent (button#L2AGLb / "Accept all"), do 1-2 innocuous searches so NID/SOCS/CONSENT set and history.length>1, then reuse that profile for later runs on the SAME IP. Honest note: a warmed cookie raises the baseline but reCAPTCHA-v3 re-scores behavior every request; at least one user reported cookie-warming "changed nothing" without behavioral entropy. Necessary-but-not-sufficient. (Pre-seeding CONSENT/SOCS by hand does nothing for the "unusual traffic" CAPTCHA and a US IP rarely hits the EU consent wall anyway — skip it; get cookies organically.)
+
+STEP 5 — Add real behavioral entropy. (worth trying)
+humanize=True (or a float max-seconds, e.g. humanize=1.2) for curved cursor paths. Keep box-typing (open homepage, move cursor to the box, click, type char-by-char with sleep(random.uniform(0.05,0.2)), wait for the suggestion dropdown, then Enter). Add one scroll and a short pre-submit dwell. Randomize every delay — a fixed 3 s interval is itself a bot signal.
+
+STEP 6 — Keep navigation box-typed, not goto('/search?q='). (worth trying — hygiene, NOT the #1 tell)
+A direct /search URL lacks JS-inserted params, so typing is cleaner and can't hurt. But this is single-sourced folklore, not a proven silver bullet; box-typing with robotic timing does not by itself move the score — its value is only realized combined with STEP 5.
+
+STEP 7 — Fix session/IP hygiene (see section 4). (verified)
+Treat a CAPTCHA'd sticky IP as burned; rotate the Decodo port and start a fresh warmed profile. Cap ~30 queries/hr/IP, 1 in-flight request per IP.
+
+STEP 8 — Keep the base Firefox reasonably current, but don't expect it to fix Google. (worth trying, low priority)
+Pull the newest OFFICIAL Camoufox build; only fall back to the coryking Firefox-142 fork if the official base lags. This is hygiene (and genuinely fixes some Akamai sites) — but the "135 is the Google-Search culprit / the fork fixes Google" claim is a myth: the fork's evidence is entirely Akamai sites, and a direct tester reports the fork STILL CAPTCHA'd on Google while 135 worked fine on Search. Do not spend your budget here first. If you do upgrade, keep the UA rv:/Firefox/NNN equal to the real build (avoid the 142.0.1-vs-142.0 patch mismatch browserscan flags) and avoid >=145 if you also touch AI Studio.
+
+STEP 9 — Validate you're not silently parsing a challenge page. (verified)
+CAPTCHA pages return HTTP 200. After each search assert the AIO/AI-Mode container (or "AI Overview" text) exists; detect /sorry/index and the reCAPTCHA iframe explicitly so "blocked" isn't mistaken for "no AIO."
+
+====================================================================
+3. EXACT CAMOUFOX LAUNCH CONFIG TO TRY
+====================================================================
+
+    from camoufox.async_api import AsyncCamoufox
+    import asyncio, random
+
+    # Decodo US sticky session (rotate the session id / port to change IP)
+    decodo_proxy = {
+        "server":   "http://<DECODO_HOST>:<DECODO_PORT>",
+        "username": "user-<USER>-country-us-session-<STICKY_ID>",
+        "password": "<PASS>",
+    }
+
+    async with AsyncCamoufox(
+        proxy=decodo_proxy,
+        geoip=True,                     # STEP 1: TZ/locale/lang/WebRTC from the US exit IP
+        os="windows",                   # STEP 2: string, not a list; drives platform at C++ level
+        locale="en-US",                 # match US exit; let geoip own the timezone
+        humanize=1.2,                   # STEP 5: curved cursor, up to ~1.2s travel
+        block_webrtc=False,             # STEP 3: let geoip spoof ICE candidates
+        # block_webgl left OFF on purpose (Google reads canvas/WebGL)
+        block_images=True,              # bandwidth saver, safe
+        persistent_context=True,        # STEP 4: warm cookie jar per IP
+        user_data_dir="./gprofile_us_<STICKY_ID>",
+        headless=False,                 # or headless="virtual" on Linux (Xvfb)
+        i_know_what_im_doing=True,
+        # DO NOT set block_webrtc=True, disable_coop, or extra JS-stealth libs.
+        # DO NOT hand-set navigator.platform/oscpu/hardwareConcurrency (ignored + leaks real OS).
+    ) as browser:
+        page = await browser.new_page()
+
+        # Runtime coherence assertion (STEP 2) — must print Win32
+        await page.goto("https://www.google.com/?hl=en&gl=us",
+                        wait_until="domcontentloaded")
+        print(await page.evaluate(
+            "() => ({p:navigator.platform, o:navigator.oscpu, "
+            "hc:navigator.hardwareConcurrency, ua:navigator.userAgent})"))
+
+        # Consent (usually absent on US IP; harmless if missing)
+        try:
+            await page.click("button#L2AGLb", timeout=3000)
+        except Exception:
+            pass
+
+        # STEP 6 + 5: box-typed search with jitter
+        box = page.locator("textarea[name=q], input[name=q]").first
+        await box.click()
+        for ch in "your query here":
+            await box.type(ch)
+            await asyncio.sleep(random.uniform(0.05, 0.2))
+        await asyncio.sleep(random.uniform(0.4, 0.9))   # pre-submit dwell
+        await box.press("Enter")
+
+        # For AI Overviews / AI Mode, prefer the udm=50 surface once warmed:
+        # await page.goto(f"https://www.google.com/search?q={q}&udm=50&hl=en&gl=us",
+        #                 wait_until="networkidle")
+        # await page.wait_for_timeout(8000)  # deferred AIO async fill
+
+        # STEP 9: verify, don't parse a challenge
+        if "/sorry/" in page.url or await page.locator("iframe[src*=recaptcha]").count():
+            raise RuntimeError("BURNED_IP")  # rotate port, fresh profile
+
+Do NOT pin a hardcoded rv:125.0 UA unless it matches the running build. If you omit the UA override, BrowserForge matches it to the base automatically — that is safer than a mismatched hand-set value.
+
+====================================================================
+4. IP / SESSION POLICY
+====================================================================
+
+- Sticky, NOT per-query rotation. Rotating IP on every query is itself a bot signal (real users keep one IP across search→click). Hold one Decodo sticky IP for a coherent run.
+- Volume ceiling: target ~30 queries/hr/IP (warnings start ~60-100/hr). 1 in-flight request per IP — no parallel tabs/queries on the same exit. Note Google killed num=100 (Sep 2025), so deep pagination for 100 results now costs ~10 page loads and consumes your per-IP budget 10x faster.
+- Pacing: 2-5 s RANDOMIZED gaps between actions (uniform intervals are a tell). Space searches tens of seconds apart.
+- Burn rule (most important for your symptom): the instant you see /sorry/index, a reCAPTCHA iframe, or the no-results page → abandon that sticky session immediately. Rotate to a NEW Decodo session id (new exit IP), re-run geoip so TZ/locale re-match, and start a FRESH warmed profile. Do NOT retry the flagged IP — it stays tar-pitted and retrying deepens the flag. Recovery per-IP is unpredictable (residential IPs recycle on ~48h order); don't wait on a specific IP, just move on.
+- One warmed profile per IP. Never carry a warmed cookie jar onto a new IP (warmed-cookies-on-new-IP is itself a mismatch).
+- Warm-up sequence (first run on a fresh sticky IP, headed):
+  1. goto google.com/?hl=en&gl=us
+  2. accept consent if shown (button#L2AGLb)
+  3. do 1-2 innocuous box-typed searches, scroll a little, dwell
+  4. let NID/SOCS/CONSENT settle, history.length grows >1
+  5. persist user_data_dir; reuse it for real queries on that same IP.
+
+====================================================================
+5. TESTING PLAN — isolate the fix on a <100 MB budget
+====================================================================
+
+Principles: block_images=True on every test. One query per test. NEVER reuse a sticky port that already CAPTCHA'd — it stays flagged, so a repeat there tests nothing. Rotate the Decodo session id/port for EACH test so every test starts on a fresh exit IP. A full Google SERP is a few MB with images off; the whole plan below is well under 100 MB.
+
+Test 0 — Baseline coherence (near-zero bandwidth, do FIRST).
+Fresh port. Launch with the section-3 config, goto homepage only, run the navigator.platform assertion. If platform != 'Win32' (or you're on Linux spoofing Windows), STOP — you found a certain-flag leak (#516). Fix os= / host before any other test. ~1-2 MB.
+
+Test 1 — geoip + coherence, cold, one search. (isolates STEP 1-3)
+New port. Full section-3 config but persistent_context=False, humanize off, plain (fast) typing. One box-typed search. Pass here ⇒ geo-mismatch was your root cause (#1). Fail ⇒ continue. ~3-5 MB.
+
+Test 2 — add behavior. (isolates STEP 5)
+New port. Same as Test 1 + humanize=1.2 + char-by-char jittered typing + one scroll + dwell. One search. Pass here ⇒ behavior was the gate (#2). ~3-5 MB.
+
+Test 3 — add warm persistent profile. (isolates STEP 4)
+New port, fresh user_data_dir. Run the full warm-up sequence (consent + 2 innocuous searches), then the real query. Pass only here ⇒ cold-session was decisive. ~8-12 MB (warm-up costs a few extra page loads).
+
+Test 4 — udm=50 surface. (confirms AIO path)
+Reuse the warmed profile from Test 3 on its SAME still-good port. goto ...&udm=50..., wait ~8 s networkidle, assert the AI answer container. Confirms you can actually read AIO/AI-Mode, not just avoid CAPTCHA. ~3-5 MB.
+
+Test 5 (only if 1-4 all fail) — base-version hygiene.
+New port. Upgrade to newest official Camoufox (or coryking fork), keep UA==build, rerun Test 3. Low expectation for Google per the evidence; this mainly rules the version out. ~8-12 MB.
+
+Stop at the first PASS — that isolates your dominant cause. Total budget if you run all six: ~30-45 MB, leaving margin for a couple of retries on fresh ports.
+
+====================================================================
+6. FALLBACKS if browser scraping still fails
+====================================================================
+
+Proven order of honesty:
+
+A. nodriver (Chromium, non-CDP, uses your real installed Chrome). In the same 2026 benchmark nodriver scored 0 blocked targets and OK on Google Search, while patched-Chromium (Patchright/rebrowser) and vanilla Playwright hard-block. If Camoufox loops after all of section 2, nodriver is the strongest browser alternative. Do NOT "downgrade" to plain Patchright expecting fewer CAPTCHAs — for the raw Google gate it's the opposite.
+
+B. Persistent-profile + solve-once, headed. Pattern shipped by PleasePrompto/google-ai-mode-mcp (Patchright + persistent Chrome profile + solve first CAPTCHA by hand, reuse cookies). Reduces FREQUENCY, not to zero — first run still shows a CAPTCHA and it can't beat IP reputation. Reasonable if a human can solve one challenge per sticky IP occasionally.
+
+C. curl_cffi (TLS-impersonate Chrome) — ONLY for organic 10-blue-links. It passes Google's gate but CANNOT render AIO / AI-Mode (that content loads via a secondary async call that fires only in a live browser). So it is NOT an AIO route. Listed only to close the door: there is NO no-JS / gbv=1 / udm=14 path to AI Overviews (udm=14 explicitly STRIPS AIO).
+
+D. SERP API for AIO only (accept it). If a clean, geo-matched, warmed, humanized Camoufox STILL CAPTCHAs at an unacceptable rate, the honest endpoint is a purpose-built SERP/AIO API. Cookie/IP/behavior tuning moves the CAPTCHA rate at the margin; it will not rescue a browser Google has decided to challenge, and chasing 0% is not realistic. Budget for graceful degradation (detect CAPTCHA → rotate → back off → route hard queries to the API) rather than expecting the browser path to be bulletproof.
+
+WHAT'S PROVEN vs HOPEFUL (bottom line):
+- Proven high-impact: geoip=True geo-match, os=-driven OS coherence + runtime assertion, don't-block WebRTC/WebGL, burn-and-rotate IP policy, per-IP pacing, verify-not-parse-challenge, Camoufox already beats Chromium-stealth on Google.
+- Hopeful/supporting (real but oversold individually): warm persistent profile, humanize + jitter, box-typing. Do them together; none is a standalone fix.
+- Myth for Google Search specifically: "upgrade off Firefox-135 / use the coryking fork" as THE fix, and "TLS/JA3 is the problem." Keep the base current as hygiene, but don't spend your first effort or budget there.

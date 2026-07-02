@@ -1,0 +1,513 @@
+================================================================================
+IPRoyal vs Decodo for Google AI Overview Scraping — Decision Report
+Residential proxy due diligence (migrating away from Bright Data)
+================================================================================
+
+
+1. BOTTOM LINE
+--------------------------------------------------------------------------------
+Neither provider repeats the Bright Data trap. Both IPRoyal and Decodo permit
+google.com/search on raw rotating residential proxies, neither KYC-gates Google,
+neither has an "immediate-vs-full access" tier that blocks search engines, both do
+clean HTTPS passthrough (no custom CA cert, no SEC_ERROR_UNKNOWN_ISSUER), and
+neither forces you onto a paid SERP API — the API is a soft upsell in both cases.
+
+RECOMMENDATION: Buy Decodo. It is the stronger choice for our use case on three
+counts:
+
+  (1) Decodo states in its own official docs, verbatim, that "Google targets are
+      accessible with rotating residential proxies" — that is positive, explicit
+      permission, whereas IPRoyal's all-clear rests on Google's ABSENCE from
+      blocked lists (negative evidence) plus a generic robots.txt AUP clause.
+
+  (2) Decodo's pool is larger and independently verified higher quality (115M+
+      IPs, 95.87% genuinely residential, ~99.8% global success), while IPRoyal
+      posted only 66.77%-70% success on Google specifically, with up to 30%
+      CAPTCHA in independent tests.
+
+  (3) IPRoyal's KYC, while it doesn't gate Google, restricts you to ~40% of the
+      pool until you submit a government ID + selfie — the closest thing to a
+      Bright-Data-flavored gate in this comparison.
+
+IPRoyal's only real edge is non-expiring traffic and slightly cheaper bulk
+pricing. For a budget Google/AIO scraper that wants to avoid getting burned
+again, Decodo is the safer, more explicitly-sanctioned bet — verify with the
+$0 / 100 MB free trial first (plan in section 7).
+
+
+2. THE BRIGHT DATA TRAP CHECKLIST
+--------------------------------------------------------------------------------
+Legend:  [OK] clear / safe     [!] friction but not blocking     [X] hard blocker
+
+Trap 1 — Google SERP allowed on raw residential
+  IPRoyal:  [OK]  Allowed. Google absent from all blocked/KYC/restricted lists;
+                  IPRoyal markets residential FOR SERP/SEO. No bad_endpoint
+                  refusal. (Permission inferred from absence + AUP, not an
+                  explicit "Google permitted" statement.)
+  Decodo:   [OK]  EXPLICITLY allowed — docs state verbatim "Google targets are
+                  accessible with rotating residential proxies." Strongest
+                  possible evidence.
+
+Trap 2 — KYC gate (the wall that blocked us on Bright Data)
+  IPRoyal:  [!]   KYC exists and is real friction — but does NOT gate Google.
+                  Without gov-ID+selfie (via iDenfy) you get only ~40% of the
+                  pool (~13.6M of 34M IPs) + no Residential API. Google works
+                  pre-KYC on the reduced pool.
+  Decodo:   [OK]  KYC is narrow and "triggered only when needed." Gates only
+                  Mailing/Streaming/Business categories — NEVER Google. Full
+                  pool available from first dollar.
+
+Trap 3 — Access-mode restriction (immediate vs full / robots.txt default)
+  IPRoyal:  [OK]  Tiered access exists but is domain-list based, not a
+                  search-engine lockout. No robots.txt default that blocks
+                  google.com/search until upgrade.
+  Decodo:   [OK]  No immediate/full tiering at all. Only a static category
+                  blocklist; Google open by default. ("Two modes" = rotating
+                  port vs sticky port — session behavior, not access.)
+
+Trap 4 — TLS interception (the SEC_ERROR_UNKNOWN_ISSUER cert errors)
+  IPRoyal:  [OK]  Clean HTTPS passthrough; no custom CA cert, no cert errors.
+                  Standard HTTP(S)/SOCKS5 forward proxy. (Medium confidence —
+                  based on convergent silence across sources, not an explicit
+                  vendor "no MITM" statement.)
+  Decodo:   [OK]  Clean HTTPS passthrough. DEFINITIVE PROOF: official Decodo
+                  Playwright example uses plain proxy:{server} with NO
+                  ignoreHTTPSErrors, NO rejectUnauthorized:false, NO CA cert.
+
+Trap 5 — Pushed onto a paid SERP API
+  IPRoyal:  [OK]  Optional upsell only. IPRoyal sells a Web Unblocker
+                  (~$1/1k req) and reviews 3rd-party SERP APIs but "only
+                  provides proxy services" itself — no forced funnel, no
+                  residential-side refusal.
+  Decodo:   [!]   Soft cross-sell. Decodo heavily markets its own SERP Scraping
+                  API and reviews tend to test Google via it — but docs
+                  simultaneously list Google as accessible on raw residential.
+                  Convenience, not a mandate.
+
+READING THE TABLE: there is no [X] hard blocker in either column. The only place
+Bright-Data-flavored friction survives is IPRoyal's KYC/pool-size gate (Trap 2)
+and Decodo's SERP-API marketing pressure (Trap 5). The KYC gate is the more
+material one for us because it touches the same nerve Bright Data hit.
+
+
+3. IPROYAL — DETAIL
+--------------------------------------------------------------------------------
+Google-SERP verdict: Permitted, but only "likely" rather than "confirmed" — the
+all-clear rests on Google's absence from every blocked/KYC/restricted tier plus a
+generic robots.txt AUP clause (sec 2.3.14 / 3.2), not an explicit vendor
+statement. No bad_endpoint refusal mechanism exists in their error-code docs. The
+catch is QUALITY, not policy: independent tests measured 66.77% Google success at
+avg 5.97s (Proxyway) and ~70% with ~30% CAPTCHA (GoLogin) on the shared
+residential pool. Distrust the 98.2% figure from proxylook.com (vendor-aligned).
+
+Pros:
+  - Google permitted on raw residential; markets residential explicitly for
+    SERP/SEO scraping.
+  - NON-EXPIRING traffic — purchased GB roll over until used (a genuine edge over
+    both Bright Data and Decodo subscriptions).
+  - Clean HTTPS passthrough, no cert install.
+  - 7-day sticky sessions (longest in this comparison), unlimited concurrent
+    sessions, country/state/city/ISP targeting at no extra cost.
+  - Cheapest bulk: down to ~$1.75/GB at 1TB.
+  - Zero monthly minimum.
+
+Cons:
+  - KYC wall touches the same nerve Bright Data did: gov-ID + selfie (via
+    third-party iDenfy) required to unlock the full pool and the Residential API;
+    without it you scrape from ~40% of IPs (~13.6M). Google works pre-KYC, but on
+    the reduced pool.
+  - Mediocre Google hit-rate (66-70%) -> must budget for retries/CAPTCHA handling.
+  - Smaller real pool than headline: an independent 21-day crawl saw only
+    ~535,859 unique IPs from the global gateway.
+  - Weak/conflicting refund terms — treat paid traffic as non-refundable.
+  - $10-spend threshold to become KYC-eligible; $500 to unlock extra domains
+    (irrelevant to Google, but signals a gated culture).
+
+Fit for our browser + warm-up architecture: Good on mechanics —
+http://USER:PASS@geo.iproyal.com:12321 with geo/session flags embedded in
+credentials, 7-day sticky sessions ideal for warming up an IP before hitting
+Google, clean passthrough so Playwright/Firefox needs no ignoreHTTPSErrors. The
+66-70% Google rate means our warm-up + retry logic will be doing real work; the
+long sticky window helps amortize a warmed IP across many AIO queries.
+
+
+4. DECODO (formerly Smartproxy) — DETAIL
+--------------------------------------------------------------------------------
+Google-SERP verdict: Permitted — and this is the ONLY provider here with explicit,
+positive documentation: "Google targets are accessible with rotating residential
+proxies with 3GB, 10GB, 25GB, 50GB, 100GB plans and Pay As You Go." Google is
+absent from both the KYC list (Mailing/Streaming/Business only) and the
+permanent-block list (Banking/Government/Ticketing/Gaming/Telecom). The error-code
+docs show only generic 403 (retry different IP) and 525 (no exit node) — no
+bad_endpoint refusal. No Google-specific success rate is published anywhere, so
+the headline 99.8% numbers are global/CDN benchmarks, not Google-proven.
+
+Pros:
+  - EXPLICIT written permission for Google on raw rotating residential — the
+    single best mitigation of our #1 fear.
+  - No blanket KYC, and NONE for Google; full pool from first dollar.
+  - Clean HTTPS passthrough proven by their own Playwright example (no cert/SSL
+    workaround).
+  - Large, independently-verified pool: 115M+ IPs advertised, 95.87% genuinely
+    residential, 466,068 unique US IPs found in a 14-day test; ~99.8-99.86%
+    global success, ~0.63s response, ranked fastest of 17 providers (Apr 2025).
+  - Flexible monthly subscriptions, no long-term lock-in, low entry
+    (3GB = $11.25).
+
+Cons:
+  - PAYG is expensive at $8.50/GB (vs IPRoyal ~$7) — only worth it for tiny
+    volumes; buy a subscription tier for real work.
+  - Harder SERP-API cross-sell than IPRoyal, though it's optional.
+  - Sticky sessions cap at 24h (vs IPRoyal's 7 days) — fine for warm-up, just
+    shorter.
+  - No published Google-specific success/CAPTCHA rate — you still own CAPTCHA
+    handling at scale (true of any residential network).
+  - Some user reports of ISP/static IPs flagged as datacenter — NOT relevant to
+    rotating residential, which is what we want.
+
+Fit for our browser + warm-up architecture: Strong. Single backconnect gateway
+http://user:pass@gate.decodo.com:7000 (rotating) or sticky ports 10001+; sticky
+sessions 10 min default up to 1440 min (24h) via -sessionduration-, geo via
+-country-us-city-chicago. Clean passthrough means our Firefox/Playwright stack
+runs unchanged (no cert, no ignoreHTTPSErrors). Caveat: long sticky sessions may
+drop early if the underlying residential device goes offline — build
+session-refresh into the warm-up loop.
+
+
+5. COST COMPARISON
+--------------------------------------------------------------------------------
+                          IPRoyal                      Decodo
+  PAYG $/GB (1 GB)        ~$7.00-$7.35 (some promos     $8.50 (Wallet, 1 GB at a
+                          cite $3.50-$3.68 — verify     time)
+                          at checkout)
+  Smallest subscription   n/a — PAYG, no monthly min    3 GB = $11.25 ($3.75/GB)
+  ~10 GB                  ~$5.51/GB                     $3.50/GB ($35)
+  ~50 GB                  ~$4.90-$5.15/GB               $3.00/GB ($150)
+  Bulk floor             ~$1.75/GB (1 TB)              $2.00/GB (1 TB)
+  Traffic expiry          NEVER EXPIRES                 Subscription = monthly;
+                                                        PAYG via Wallet
+  Free trial             3 days / 100 MB, credit card  3 days / 100 MB, cancel
+                          required (no crypto),         anytime, auto-converts
+                          auto-converts                 if not cancelled
+  Refund                 Weak/conflicting — assume     14-day money-back (does
+                          non-refundable                NOT apply if you take the
+                                                        3-day free trial)
+
+Note on subscription cross-over: at small-to-mid volume Decodo's SUBSCRIPTION
+($3.00-$3.75/GB) is cheaper than IPRoyal's PAYG ($4.90-$7/GB); IPRoyal only wins
+on pure PAYG entry price and at 1 TB+ bulk. For a budget scraper doing a few
+GB/month, Decodo's 3 GB plan at $11.25 is the most cost-effective real-work option
+and beats IPRoyal per-GB until you reach large bulk.
+
+What a test costs: $0 on either — both give a 3-day / 100 MB free trial.
+IPRoyal's trial requires a credit card (no crypto) and is granted at their
+discretion; Decodo's is cancel-anytime. 100 MB is plenty to validate Google
+access + gateway setup + measure the real Google/AIO success rate (a Google SERP
+HTML page is ~0.5-2 MB, so 100 MB ~= 50-200 fetches — enough for a meaningful
+hit-rate sample).
+
+
+6. HONEST RISKS & UNKNOWNS
+--------------------------------------------------------------------------------
+Not verified / thin evidence — stated honestly:
+
+  - No Google-specific success rate exists for Decodo. The 99.8%+ numbers are
+    global/CDN benchmarks. Decodo's OWN guide concedes "Scraping Google can
+    quickly turn frustrating when repeatedly met with CAPTCHA challenges." The
+    trial must measure the Google-specific rate ourselves.
+
+  - IPRoyal's "Google permitted" is inferred, not stated. It rests on Google's
+    absence from blocked lists + a generic robots.txt AUP clause (sec 2.3.14/3.2).
+    That clause, read aggressively, covers automated Google querying — but it's
+    boilerplate present even in providers that openly sell SERP scraping, with no
+    evidence of residential-side enforcement. Rated "likely," not "confirmed."
+
+  - TLS-passthrough confidence is MEDIUM for IPRoyal (convergent silence across
+    sources, not an explicit statement) and HIGH for Decodo (proven by their own
+    cert-free Playwright example).
+
+  - IPRoyal's separate Web Unblocker product was not verified and could behave
+    differently (it's an anti-bot/MITM-style proxy). This finding applies only to
+    raw rotating residential.
+
+  - Exact $/GB varies by source/promo for IPRoyal ($3.50-$7.35 at 1 GB) — confirm
+    live at checkout.
+
+What could still go wrong regardless of provider:
+
+  - CAPTCHA at scale. Google fraud-scores residential IPs; both networks will
+    throw CAPTCHAs under load. IPRoyal showed this concretely (30% CAPTCHA in one
+    test). Plan for retry + IP-rotation logic, not a clean 100%.
+
+  - AI Overview non-determinism. AIO does not render for every query, every geo,
+    or every session — it's gated by Google's own triggering logic and varies by
+    location, query intent, and personalization. A "missing AIO" in results may
+    be Google's behavior, not a proxy failure. Our warm-up/geo-targeting must be
+    tuned to AIO-triggering query+geo combos, and our success metric must separate
+    "page fetched" from "AIO present."
+
+  - Sticky-session drops (Decodo, when the residential device goes offline) —
+    build session-refresh into the warm-up loop.
+
+Test-before-you-scale: never commit money on either before measuring our OWN
+Google/AIO hit-rate on the free trial. The headline benchmarks won't predict our
+number because they don't test Google specifically (Decodo) or test on a shared
+pool with high fraud scores (IPRoyal).
+
+
+7. FINAL RECOMMENDATION
+--------------------------------------------------------------------------------
+Buy Decodo. It is the only provider with explicit written permission for Google on
+raw residential, has the larger and independently-verified-cleaner pool, carries
+no KYC gate anywhere near our use case, and proves clean HTTPS passthrough with
+its own cert-free Playwright example. Its weaknesses (pricey PAYG, soft SERP-API
+push, 24h sticky cap) are minor and none is a Bright-Data-style blocker. IPRoyal
+is a reasonable fallback — its non-expiring traffic + 7-day sticky sessions are
+genuinely nice — but its 66-70% Google success rate and gov-ID KYC wall make it
+the second choice for someone whose explicit goal is to NOT get burned again.
+
+RUN THIS EXACT CHEAP TEST FIRST (~$0, ~1 hour) on the Decodo 3-day/100 MB free
+trial — cancel before it converts:
+
+  1. Sign up, take the free trial (cancel-anytime; the 14-day money-back doesn't
+     apply to the trial, so just don't let it auto-convert).
+
+  2. Point our existing Playwright/Firefox stack at
+     http://USER:PASS@gate.decodo.com:7000 — confirm it runs with NO
+     ignoreHTTPSErrors and NO CA cert (this directly proves the cert-error trap
+     is gone).
+
+  3. Validate Google access: fetch https://www.google.com/search?q=... through a
+     rotating IP. Confirm real SERP HTML and NO bad_endpoint-style refusal (this
+     proves the core Bright Data trap is gone).
+
+  4. Measure real numbers over ~50-100 requests across target geos using
+     -country-XX-city-YY: record (a) HTTP success rate, (b) CAPTCHA rate, and
+     (c) AIO-PRESENT rate specifically (separate "page loaded" from "AI Overview
+     rendered"). This is the number no benchmark gives us.
+
+  5. Test a warmed sticky session: use a sticky port / -session-<id>-
+     sessionduration-30, warm the IP, then hit the AIO queries — compare hit-rate
+     vs cold rotating.
+
+  6. Decision rule: if AIO-present + success rate is acceptable on the trial, buy
+     the 3 GB subscription ($11.25, $3.75/GB) — NOT PAYG ($8.50/GB) — and scale up
+     tiers as volume grows. If Decodo's CAPTCHA rate is too high, run the
+     identical test on IPRoyal's trial before deciding, then weigh its cheaper
+     bulk + non-expiring traffic against its lower Google hit-rate.
+
+DO NOT pre-pay either provider before step 4 gives a real, Google-specific,
+AIO-specific success number — that single measurement, not the marketing
+benchmarks, is what protects us from a second burn.
+
+
+--------------------------------------------------------------------------------
+SOURCES
+--------------------------------------------------------------------------------
+Decodo:
+  - Blocked sites FAQ:        https://decodo.com/faq/general/do-you-have-any-blocked-sites
+  - Restricted targets docs:  https://help.decodo.com/docs/mobile-proxy-restricted-targets
+  - Residential quick-start:  https://help.decodo.com/docs/residential-proxy-quick-start
+  - Sticky sessions docs:     https://help.decodo.com/docs/residential-proxy-custom-sticky-sessions
+  - Security & compliance:    https://decodo.com/security-compliance
+  - Pricing:                  https://decodo.com/proxies/residential-proxies/pricing
+  - SERP API (the upsell):    https://decodo.com/scraping/serp/google-search
+  - Playwright example:       https://raw.githubusercontent.com/Decodo/Playwright/main/playwright.js
+  - Proxyway review:          https://proxyway.com/reviews/smartproxy-proxies
+
+IPRoyal:
+  - Domain access terms:      https://docs.iproyal.com/proxies/residential/domain-access-terms
+  - Blocked sites FAQ:        https://help.iproyal.com/en/articles/7214682-what-websites-are-blocked-with-residential-proxies
+  - SEO proxies use case:     https://iproyal.com/use-cases/seo-proxies/
+  - KYC policy (PDF):         https://iproyal.com/kyc-policy/IPRoyal_KYC.pdf
+  - Residential pricing:      https://iproyal.com/pricing/residential-proxies/
+  - Best Google SERP API:     https://iproyal.com/blog/best-google-serp-api/
+  - ScrapeOps integration:    https://scrapeops.io/proxy-providers/iproyal/python-iproyal-residential-proxy-guide/
+
+================================================================================
+Prepared for: traqer_scraper — Google AI Overviews engine proxy decision
+Context: migrating off Bright Data (residential refuses Google SERPs via
+bad_endpoint). Research adversarially verified; figures from 2025-2026 sources.
+================================================================================
+
+
+
+
+################################################################################
+ADDENDUM: THREE CHEAP RESIDENTIAL PROVIDERS (Evomi, Proxy-Cheap, DataImpulse)
+################################################################################
+
+Context: extends the Decodo-vs-IPRoyal report to cover three sub-$1/GB
+residential options, against the same goal: do NOT repeat the Bright Data burn
+(no bad_endpoint refusal, no forced SERP-API funnel, no KYC wall on Google, no
+TLS interception), stay cheap, AND actually get good Google AI Overview success.
+
+BOTTOM LINE UP FRONT: all three clear the Bright Data structural traps, but NONE
+is a proven cheap Google performer, and the cheapness is partly an illusion once
+Google's anti-abuse retry tax is applied.
+
+
+A1. ONE-LINE VERDICT PER PROVIDER
+--------------------------------------------------------------------------------
+Evomi — Google ALLOWED on raw rotating residential (no policy ban, no SERP-API
+  gate), but NOT a good "cheap for Google" pick: only independent Google number is
+  ~62% success (Proxyway); advertised 98% is vendor marketing; the $0.49/GB
+  headline inflates up to 15x once you enable the features needed to survive
+  Google; credible "datacenter-IPs-sold-as-residential" complaints.
+  VERDICT: MAYBE — trial-only.
+
+Proxy-Cheap — Google LIKELY allowed (SERP marketed, no SERP-API product), but the
+  WEAKEST of the three on quality: documented recurring high fraud scores
+  (80-89%), "residential" IPs that turn out datacenter/VPN, geo-mismatch reports,
+  refund policy that only pays out above IPQualityScore 75. ZERO independent
+  Google data; Proxyway omits it from its Google ranking entirely.
+  VERDICT: NO — not recommended without heavy validation.
+
+DataImpulse — Google EXPLICITLY allowed (vendor publishes a Python guide pointing
+  raw residential straight at google.com/search; Google not on its blocked list),
+  most honestly documented of the three, but the cheap $1/GB pool's Google success
+  is UNMEASURED — the only independent number (81%) is the 5x-pricier premium
+  pool, and DataImpulse's own OpenBullet docs admit Google soft-blocks some IPs.
+  VERDICT: MAYBE — best-structured of the three, but validate the cheap tier.
+
+
+A2. COMPARISON BLOCK
+--------------------------------------------------------------------------------
+Evomi
+  Price/GB (cheap tier): $0.49/GB (100GB plan) / $0.99 PAYG (Core); Premium ~$2.15-4
+  Google allowed?:       YES — raw residential, no SERP-API gate, no ban
+  Google success (indep):~62% (Proxyway, US). 98% = vendor marketing, not audited
+  Pool-quality concern:  P2P/Earn.fm-sourced, recycled IPs; Trustpilot reports ISP
+                         IPs flagged as datacenter (ServerMania); Proxyway flagged
+                         "more abuse than most competitors"; ToS bans IP-checker URLs
+  Verdict:               MAYBE (trial-only)
+
+Proxy-Cheap
+  Price/GB (cheap tier): ~$0.78/GB (51GB+) to ~$2.99 (3GB entry); claims vary by page
+  Google allowed?:       LIKELY (SERP marketed, no SERP-API product) — unconfirmed
+  Google success (indep):UNKNOWN — no independent Google data; Proxyway excludes it;
+                         the ~92% figure is affiliate/own-blog promo
+  Pool-quality concern:  Recurring high fraud scores (80-89%); "residential" that is
+                         datacenter/VPN; geo mismatch (ordered US, got LT/UA); IP
+                         churn; vendor-favoring no-refund policy
+  Verdict:               NO (not recommended)
+
+DataImpulse
+  Price/GB (cheap tier): $1/GB PAYG (regular, ~$0.80 at 1TB); Premium $5/GB
+  Google allowed?:       YES — explicit; vendor docs raw resi -> Google; not on
+                         blocked list
+  Google success (indep):81% on PREMIUM ($5/GB) pool (Proxyway). Cheap $1 pool
+                         UNMEASURED (est. ~70-75%)
+  Pool-quality concern:  ~10% non-residential taint in regular pool; vendor docs
+                         admit Google soft-blocks some IPs; Trustpilot complaints of
+                         DC pools sold as resi, banned IPs, drained traffic; DNS leaks
+  Verdict:               MAYBE (best-structured)
+
+
+A3. KEY INSIGHT — DOES CHEAPER = WORSE GOOGLE? IS THE SAVING REAL?
+--------------------------------------------------------------------------------
+Yes. For Google specifically, cheaper reliably correlates with worse success, and
+the headline saving largely evaporates once you account for retries/CAPTCHA waste.
+
+(a) Cheap residential pools are P2P/recycled and reputation-tainted. The cheap
+    tiers (Evomi Core via Earn.fm, Proxy-Cheap's pool, DataImpulse regular)
+    recycle the same residential IPs across many customers. Google fraud-scores
+    heavily-reused residential IPs harder than any other target on the web — so
+    the exact thing that makes these pools cheap is what makes them fail on Google.
+    Proxyway diagnosed Evomi's residential as having "seen more abuse than most
+    competing providers" — note the Google-specific gap on the SAME pool: ~62%
+    Google vs ~93% Amazon vs ~79% Instagram.
+
+(b) The cheap sticker is NOT the cheap effective cost. At ~62% Google success
+    (Evomi) you pay ~1.6 attempts per successful page (~38% retry overhead). Worse,
+    Evomi's $0.49/GB applies ONLY with no advanced settings — enabling the
+    fraud-score filtering / extra-IP / ASN targeting needed to lift Google yield
+    multiplies bandwidth "up to 15x in extreme scenarios." The better Google
+    numbers only appear on the PREMIUM pools (Evomi Premium ~$2.15-4, DataImpulse
+    Premium $5) — at which point you're no longer "cheap" and the proven-Google
+    providers (Oxylabs ~93%, Infatica ~94%, Decodo ~87%) become competitive.
+
+(c) For a cheap provider, the ABSENCE of independent Google data is itself a risk
+    signal. Proxy-Cheap has none and Proxyway leaves it out of its Google ranking;
+    DataImpulse's cheap pool has none (only premium measured); Evomi's only
+    independent Google number is mediocre. When a provider is cheap AND there's no
+    neutral Google measurement, assume the silence is bad news — the providers that
+    perform well on Google publish those numbers.
+
+
+A4. UPDATED OVERALL RANKING — ALL FIVE PROVIDERS
+--------------------------------------------------------------------------------
+For the goal (don't get burned like Bright Data + cheap + good Google AIO success):
+
+1. DECODO — RECOMMENDED PRIMARY. ~87.3% Google success (Proxyway, independent),
+   clears the Bright Data traps, mid-priced not premium. Best balance of
+   "proven on Google" and "not enterprise-priced." Stays the default.
+
+2. IPROYAL — RECOMMENDED BACKUP / cost-sensitive secondary. Use as fallback
+   rotation alongside Decodo. (Note: 66-70% Google + gov-ID KYC for full pool.)
+
+3. DATAIMPULSE — BEST OF THE THREE NEW CHEAP OPTIONS, conditional. Most honest
+   docs, explicitly Google-allowed, never-expiring traffic, first-party sourcing.
+   But only the $5 premium pool has a proven (81%) Google number; the $1 pool is
+   unproven. Worth a $5 trial to test BOTH regular and premium US sticky sessions
+   against your AIO flow. If $1 clears your bar -> cheapest credible option; if not,
+   premium at $5 just competes with Decodo, so use Decodo.
+
+4. EVOMI — TRIAL-ONLY, do not commit on the sticker. Genuinely escapes the Bright
+   Data pain points and ~95% authenticity in aggregate, BUT ~62% Google, 98% is
+   marketing, the cheap price inflates with the features you need, and there are
+   real "DC-sold-as-residential" + reliability (hanging requests, outages)
+   complaints — dangerous for an unattended scraper. Use the 1-day free trial.
+
+5. PROXY-CHEAP — AVOID for Google AIO unless desperate. Documented high fraud
+   scores (80-89%), datacenter/VPN IPs sold as residential, geo mismatch (fatal
+   for country-specific AIO), no independent Google data, vendor-favoring refunds.
+   The cheap price hides an IP-quality trap as fatal for Google as Bright Data's
+   policy trap was.
+
+PRACTICAL PLAY: keep Decodo primary, IPRoyal backup, and run a one-week empirical
+bake-off of DataImpulse ($5 trial, both pools) — and only Evomi if you have spare
+trial time — pointing each at google.com/search with US sticky sessions through
+your real AIO render flow, measuring YOUR own AIO-render / soft-block / CAPTCHA
+rate. Do not scale onto any cheap provider on its marketing numbers. Skip
+Proxy-Cheap.
+
+
+A5. HONEST UNKNOWNS (cheap providers)
+--------------------------------------------------------------------------------
+- No cheap provider has an independent Google AI OVERVIEW-specific success rate.
+  All independent numbers above are SERP/google.com/search success, not AIO-block
+  rendering. AIO is a subset behavior and may be gated differently; your own AIO
+  render rate is the only number that matters, and none is measured on it.
+- Proxy-Cheap and the DataImpulse $1 pool have NO independent Google number at all.
+  The DataImpulse 81% is premium only; the cheap-tier ~70-75% is guesswork.
+- TLS passthrough not stress-tested for any of the three (all appear clean HTTP
+  CONNECT, no MITM evidence — good vs Bright Data — but do a one-time cert sanity
+  check on google.com after signup).
+- Pool-size/authenticity claims are all soft marketing (Evomi 54M, DataImpulse
+  90M, Proxy-Cheap 7M/50M/155M — three numbers on its own site); real measured
+  concurrent uniques are <1M each.
+- Some damaging Trustpilot/Proxyway specifics came via search summaries (those
+  sites 403 direct fetch) — the thrust (recurring quality complaints) is solidly
+  multi-source; individual quotes are paraphrase-grade, not byte-verified.
+- KYC thresholds for Proxy-Cheap (~$250-300 top-up) are third-party, approximate.
+- Trial/minimum terms vary by page/promo — confirm at checkout.
+
+
+A6. ADDENDUM SOURCES
+--------------------------------------------------------------------------------
+Evomi:        https://proxyway.com/reviews/evomi-review
+              https://proxylook.com/providers/evomi
+              https://evomi.com/pricing
+              https://trustpilot.com/review/evomi.com
+Proxy-Cheap:  https://proxyway.com/best/proxies-for-google-scraping (excludes it)
+              https://support.proxy-cheap.com (fraud-score article)
+              https://trustpilot.com/review/proxy-cheap.com
+DataImpulse:  https://dataimpulse.com/blog/how-to-scrape-google-with-python-and-proxies/
+              https://proxyway.com/reviews/dataimpulse-proxies
+              https://dataimpulse.com/blocked-websites/
+              https://dataimpulse.com/tutorials/how-to-set-up-proxies-in-openbullet/
+
+================================================================================
+END OF ADDENDUM
+================================================================================
