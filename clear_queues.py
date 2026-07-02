@@ -11,7 +11,7 @@ import sys
 import redis.asyncio as redis
 from src.config import Config
 
-ENGINES = ["chatgpt", "perplexity", "gemini", "aio"]
+ENGINES = ["chatgpt", "perplexity", "gemini"]
 
 
 async def main():

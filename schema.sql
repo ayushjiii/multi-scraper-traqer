@@ -20,10 +20,7 @@ CREATE TABLE proxies (
     status VARCHAR(20) DEFAULT 'ACTIVE',
     chatgpt_banned BOOLEAN DEFAULT FALSE,
     perplexity_banned BOOLEAN DEFAULT FALSE,
-    gemini_banned BOOLEAN DEFAULT FALSE,
-    -- Google AI Overviews engine (aio_agent.py). Note: a "ban" here usually means the
-    -- proxy is a datacenter IP that Google CAPTCHAs or suppresses AI features for.
-    aio_banned BOOLEAN DEFAULT FALSE
+    gemini_banned BOOLEAN DEFAULT FALSE
 );
 
 CREATE TABLE scrape_results (

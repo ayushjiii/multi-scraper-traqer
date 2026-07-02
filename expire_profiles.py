@@ -12,7 +12,7 @@ import asyncio
 import sys
 from src.database import DatabaseManager
 
-ENGINES = ("chatgpt", "perplexity", "gemini", "aio")
+ENGINES = ("chatgpt", "perplexity", "gemini")
 
 
 async def run(engine: str | None):

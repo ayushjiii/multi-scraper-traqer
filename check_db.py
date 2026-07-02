@@ -10,14 +10,14 @@ async def check():
     proxies = await db.fetchval("SELECT COUNT(*) FROM proxies WHERE status = 'ACTIVE'")
     print(f"Active proxies : {proxies}")
 
-    for engine in ("chatgpt", "perplexity", "gemini", "aio"):
+    for engine in ("chatgpt", "perplexity", "gemini"):
         col = f"{engine}_banned"
         unbanned = await db.fetchval(f"SELECT COUNT(*) FROM proxies WHERE status = 'ACTIVE' AND {col} = FALSE")
         print(f"  {engine}_banned=FALSE : {unbanned}")
 
     print()
     for status in ("AVAILABLE", "BUSY", "EXPIRED"):
-        for engine in ("chatgpt", "perplexity", "gemini", "aio"):
+        for engine in ("chatgpt", "perplexity", "gemini"):
             count = await db.fetchval(
                 "SELECT COUNT(*) FROM browser_profiles WHERE engine_type = $1 AND status = $2",
                 engine, status
