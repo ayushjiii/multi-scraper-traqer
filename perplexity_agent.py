@@ -106,27 +106,54 @@ class PerplexityWorker:
                 raise Exception("Editor not found — likely a hard login wall or proxy block.")
 
             await editor.focus()
-            
+
             # Hardware typing handles complex Lexical/React states where native fill fails.
             await page.keyboard.insert_text(prompt)
             await asyncio.sleep(1.0)
-            
-            # Fire the active submit button
-            send_btn = page.locator(self.send_btn_selector).first
-            if await send_btn.count() > 0 and await send_btn.is_visible():
-                await send_btn.click()
-            else:
-                await page.keyboard.press("Enter")
-                
+
+            # Submit with ENTER — it reliably submits Perplexity's composer. We do
+            # NOT click a generic 'button:has(svg)' (the homepage has many svg
+            # buttons; .first clicks the wrong one and the query never sends). Only
+            # fall back to the SPECIFIC aria-labelled submit button if Enter didn't
+            # start generation.
+            await page.keyboard.press("Enter")
+            await asyncio.sleep(1.5)
+            started = await page.evaluate(f"""() => {{
+                const els = document.querySelectorAll('{self.response_selector}');
+                const stop = document.querySelectorAll('{self.stop_btn_selector}').length;
+                return stop > 0 || (els.length && (els[els.length-1].innerText||'').length > 0);
+            }}""")
+            if not started:
+                btn = page.locator('button[aria-label="Submit"], button[aria-label*="Submit" i], button[data-testid*="submit" i]').first
+                if await btn.count() > 0 and await btn.is_visible():
+                    await btn.click()
+
             print(f"[WORKER:PERPLEXITY] Prompt successfully dispatched. Monitoring runtime generation cycle...")
 
             # ── Dynamic Witness Loop ──
             await asyncio.sleep(3.0)
-            
-            try:
-                await page.locator(self.response_selector).last.wait_for(state="visible", timeout=35000)
-            except Exception:
-                raise Exception("Generation element failed to anchor in window buffer. Threat signature suspected.")
+
+            # Wait for the answer element to EXIST and start filling — not for
+            # Playwright's strict "visible" state, which is layout-dependent and was
+            # timing out even when [data-renderer="lm"] was present and streaming.
+            # Poll via JS (like the Gemini agent) so a slow first paint / covering
+            # modal doesn't cause a false "failed to anchor".
+            anchored = False
+            for _ in range(35):
+                await asyncio.sleep(1.0)
+                try:
+                    txt_len = await page.evaluate(f"""() => {{
+                        const els = document.querySelectorAll('{self.response_selector}');
+                        if (!els.length) return 0;
+                        return (els[els.length - 1].innerText || '').length;
+                    }}""")
+                    if txt_len and txt_len > 0:
+                        anchored = True
+                        break
+                except Exception:
+                    pass
+            if not anchored:
+                raise Exception("Perplexity answer never rendered (login wall, block, or slow generation).")
 
             print(f"[WORKER:PERPLEXITY] Stream processing confirmed active. Tracking output buffer limits...")
 
@@ -136,9 +163,17 @@ class PerplexityWorker:
             for _ in range(90):  # 90 seconds maximum execution ceiling
                 await asyncio.sleep(1.0)
                 try:
-                    is_still_generating = await page.locator(self.stop_btn_selector).count() > 0
-                    current_text = await page.locator(self.response_selector).last.inner_text()
-                    current_length = len(current_text)
+                    # Single JS read of both stop-button state and answer length —
+                    # pure evaluate() never blocks on element-stability the way
+                    # locator.inner_text() does during React re-renders.
+                    state = await page.evaluate(f"""() => {{
+                        const stop = document.querySelectorAll('{self.stop_btn_selector}').length;
+                        const els = document.querySelectorAll('{self.response_selector}');
+                        const txt = els.length ? (els[els.length - 1].innerText || '') : '';
+                        return {{ generating: stop > 0, len: txt.length }};
+                    }}""")
+                    is_still_generating = state["generating"]
+                    current_length = state["len"]
 
                     if not is_still_generating and current_length == previous_length and current_length > 0:
                         stable_ticks += 1
@@ -151,7 +186,14 @@ class PerplexityWorker:
                 except Exception:
                     pass
 
-            response_text = await page.locator(self.response_selector).last.inner_text()
+            # Final read (timeout-guarded, then JS fallback like the Gemini agent).
+            try:
+                response_text = await page.locator(self.response_selector).last.inner_text(timeout=10000)
+            except Exception:
+                response_text = await page.evaluate(f"""() => {{
+                    const els = document.querySelectorAll('{self.response_selector}');
+                    return els.length ? els[els.length - 1].innerText : '';
+                }}""")
             if not response_text:
                 raise Exception("Could not extract response text.")
 
